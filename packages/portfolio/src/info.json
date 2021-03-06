@@ -1,0 +1,101 @@
+{
+	"objects": [
+		{
+			"name": "The Hunter",
+			"type": "image",
+			"category": "Illustration",
+			"images": [
+				"illustration/hunter-becomes-the-hunted-kleiner.png",
+				"illustration/hunter-becomes-the-hunted-resized-tuned.jpg"
+			]
+		},
+		{
+			"name": "Owl Business",
+			"type": "image",
+			"category": "Illustration",
+			"images": [
+				"illustration/IMAG0187.gif",
+				"illustration/IMAG0235.jpg"
+			]
+		},
+		{
+			"name": "Misc #1 (the Sleepers)",
+			"type": "image",
+			"category": "Illustration",
+			"images": [
+				"illustration/portfolio0013_verkleind.jpg"
+			]
+		},
+		{
+			"name": "Misc #2 (Rawk)",
+			"type": "image",
+			"category": "Illustration",
+			"images": [
+				"illustration/rawk-handzaam.jpg"
+			]
+		},
+		{
+			"name": "Misc #3",
+			"type": "image",
+			"category": "Illustration",
+			"images": [
+				"illustration/Scan.jpg"
+			]
+		},
+		{
+			"name": "Interfais",
+			"type": "github",
+			"category": "Code",
+			"repository": "git@github.com:wvbe/interfais.git",
+			"readme": "interfais/README.md"
+		},
+		{
+			"name": "ng-dualshock",
+			"type": "github",
+			"category": "Code",
+			"repository": "git@github.com:wvbe/ng-dualshock.git"
+		},
+		{
+			"name": "node-eyetribe",
+			"type": "github",
+			"category": "Code",
+			"repository": "git@github.com:wvbe/node-eyetribe.git"
+		},
+		{
+			"name": "ardronestreamdualshock",
+			"type": "github",
+			"category": "Code",
+			"repository": "git@github.com:wvbe/ardronestreamdualshock.git"
+		},
+		{
+			"name": "object-store",
+			"type": "github",
+			"category": "Code",
+			"repository": "git@github.com:wvbe/object-store.git"
+		},
+		{
+			"name": "bubble",
+			"description": "Bubble is a HTML5 canvas-driven experiment with a group of nodes that interact based on their proximity to others.",
+			"type": "script",
+			"category": "Code",
+			"script": "bubble",
+			"options": {
+				"width": 640,
+				"height": 480,
+				"population": 100,
+				"node_size": 2,
+				"radius_near": 25,
+				"radius_far": 120,
+				"radius_void": 30000,
+				"attraction_multiplier": 0.0003,
+				"attraction_power": 0.3,
+				"repulsion_multiplier": 0.1,
+				"repulsion_power": 0.3,
+				"slowdown_multiplier": 0.98,
+				"gravity": 0.0,
+				"node_color": "rgba(100,100,100, 0)",
+				"line_color": "51,51,51"
+			}
+		}
+	]
+}
