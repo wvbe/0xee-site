@@ -1,6 +1,6 @@
 (function () {
 /** vim: et:ts=4:sw=4:sts=4
- * @license RequireJS 2.1.15 Copyright (c) 2010-2014, The Dojo Foundation All Rights Reserved.
+ * @license RequireJS 2.1.22 Copyright (c) 2010-2015, The Dojo Foundation All Rights Reserved.
  * Available via the MIT or new BSD license.
  * see: http://github.com/jrburke/requirejs for details
  */
@@ -13,7 +13,7 @@ var requirejs, require, define;
 (function (global) {
     var req, s, head, baseElement, dataMain, src,
         interactiveScript, currentlyAddingScript, mainScript, subPath,
-        version = '2.1.15',
+        version = '2.1.22',
         commentRegExp = /(\/\*([\s\S]*?)\*\/|([^:]|^)\/\/(.*)$)/mg,
         cjsRequireRegExp = /[^.]\s*require\s*\(\s*["']([^'"\s]+)["']\s*\)/g,
         jsSuffixRegExp = /\.js$/,
@@ -22,7 +22,6 @@ var requirejs, require, define;
         ostring = op.toString,
         hasOwn = op.hasOwnProperty,
         ap = Array.prototype,
-        apsp = ap.splice,
         isBrowser = !!(typeof window !== 'undefined' && typeof navigator !== 'undefined' && window.document),
         isWebWorker = !isBrowser && typeof importScripts !== 'undefined',
         //PS3 indicates loaded and complete, but need to wait for complete
@@ -245,7 +244,7 @@ var requirejs, require, define;
                     // still work when converted to a path, even though
                     // as an ID it is less than ideal. In larger point
                     // releases, may be better to just kick out an error.
-                    if (i === 0 || (i == 1 && ary[2] === '..') || ary[i - 1] === '..') {
+                    if (i === 0 || (i === 1 && ary[2] === '..') || ary[i - 1] === '..') {
                         continue;
                     } else if (i > 0) {
                         ary.splice(i - 1, 2);
@@ -555,11 +554,13 @@ var requirejs, require, define;
         function takeGlobalQueue() {
             //Push all the globalDefQueue items into the context's defQueue
             if (globalDefQueue.length) {
-                //Array splice in the values since the context code has a
-                //local var ref to defQueue, so cannot just reassign the one
-                //on context.
-                apsp.apply(defQueue,
-                           [defQueue.length, 0].concat(globalDefQueue));
+                each(globalDefQueue, function(queueItem) {
+                    var id = queueItem[0];
+                    if (typeof id === 'string') {
+                        context.defQueueMap[id] = true;
+                    }
+                    defQueue.push(queueItem);
+                });
                 globalDefQueue = [];
             }
         }
@@ -590,7 +591,7 @@ var requirejs, require, define;
                         id: mod.map.id,
                         uri: mod.map.url,
                         config: function () {
-                            return  getOwn(config.config, mod.map.id) || {};
+                            return getOwn(config.config, mod.map.id) || {};
                         },
                         exports: mod.exports || (mod.exports = {})
                     });
@@ -846,7 +847,10 @@ var requirejs, require, define;
                     factory = this.factory;
 
                 if (!this.inited) {
-                    this.fetch();
+                    // Only fetch if not already in the defQueue.
+                    if (!hasProp(context.defQueueMap, id)) {
+                        this.fetch();
+                    }
                 } else if (this.error) {
                     this.emit('error', this.error);
                 } else if (!this.defining) {
@@ -858,21 +862,10 @@ var requirejs, require, define;
 
                     if (this.depCount < 1 && !this.defined) {
                         if (isFunction(factory)) {
-                            //If there is an error listener, favor passing
-                            //to that instead of throwing an error. However,
-                            //only do it for define()'d  modules. require
-                            //errbacks should not be called for failures in
-                            //their callbacks (#699). However if a global
-                            //onError is set, use that.
-                            if ((this.events.error && this.map.isDefine) ||
-                                req.onError !== defaultOnError) {
-                                try {
-                                    exports = context.execCb(id, factory, depExports, exports);
-                                } catch (e) {
-                                    err = e;
-                                }
-                            } else {
+                            try {
                                 exports = context.execCb(id, factory, depExports, exports);
+                            } catch (e) {
+                                err = e;
                             }
 
                             // Favor return value over exports. If node/cjs in play,
@@ -889,12 +882,30 @@ var requirejs, require, define;
                             }
 
                             if (err) {
-                                err.requireMap = this.map;
-                                err.requireModules = this.map.isDefine ? [this.map.id] : null;
-                                err.requireType = this.map.isDefine ? 'define' : 'require';
-                                return onError((this.error = err));
+                                // If there is an error listener, favor passing
+                                // to that instead of throwing an error. However,
+                                // only do it for define()'d  modules. require
+                                // errbacks should not be called for failures in
+                                // their callbacks (#699). However if a global
+                                // onError is set, use that.
+                                if ((this.events.error && this.map.isDefine) ||
+                                    req.onError !== defaultOnError) {
+                                    err.requireMap = this.map;
+                                    err.requireModules = this.map.isDefine ? [this.map.id] : null;
+                                    err.requireType = this.map.isDefine ? 'define' : 'require';
+                                    return onError((this.error = err));
+                                } else if (typeof console !== 'undefined' &&
+                                           console.error) {
+                                    // Log the error for debugging. If promises could be
+                                    // used, this would be different, but making do.
+                                    console.error(err);
+                                } else {
+                                    // Do not want to completely lose the error. While this
+                                    // will mess up processing and lead to similar results
+                                    // as bug 1440, it at least surfaces the error.
+                                    req.onError(err);
+                                }
                             }
-
                         } else {
                             //Just a literal value
                             exports = factory;
@@ -906,7 +917,11 @@ var requirejs, require, define;
                             defined[id] = exports;
 
                             if (req.onResourceLoad) {
-                                req.onResourceLoad(context, this.map, this.depMaps);
+                                var resLoadMaps = [];
+                                each(this.depMaps, function (depMap) {
+                                    resLoadMaps.push(depMap.normalizedMap || depMap);
+                                });
+                                req.onResourceLoad(context, this.map, resLoadMaps);
                             }
                         }
 
@@ -965,6 +980,7 @@ var requirejs, require, define;
                                                       this.map.parentMap);
                         on(normalizedMap,
                             'defined', bind(this, function (value) {
+                                this.map.normalizedMap = normalizedMap;
                                 this.init([], function () { return value; }, null, {
                                     enabled: true,
                                     ignore: true
@@ -1118,12 +1134,22 @@ var requirejs, require, define;
                         this.depCount += 1;
 
                         on(depMap, 'defined', bind(this, function (depExports) {
+                            if (this.undefed) {
+                                return;
+                            }
                             this.defineDep(i, depExports);
                             this.check();
                         }));
 
                         if (this.errback) {
                             on(depMap, 'error', bind(this, this.errback));
+                        } else if (this.events.error) {
+                            // No direct errback on this module, but something
+                            // else is listening for errors, so be sure to
+                            // propagate the error correctly.
+                            on(depMap, 'error', bind(this, function(err) {
+                                this.emit('error', err);
+                            }));
                         }
                     }
 
@@ -1227,13 +1253,15 @@ var requirejs, require, define;
             while (defQueue.length) {
                 args = defQueue.shift();
                 if (args[0] === null) {
-                    return onError(makeError('mismatch', 'Mismatched anonymous define() module: ' + args[args.length - 1]));
+                    return onError(makeError('mismatch', 'Mismatched anonymous define() module: ' +
+                        args[args.length - 1]));
                 } else {
                     //args are id, deps, factory. Should be normalized by the
                     //define() function.
                     callGetModule(args);
                 }
             }
+            context.defQueueMap = {};
         }
 
         context = {
@@ -1243,6 +1271,7 @@ var requirejs, require, define;
             defined: defined,
             urlFetched: urlFetched,
             defQueue: defQueue,
+            defQueueMap: {},
             Module: Module,
             makeModuleMap: makeModuleMap,
             nextTick: req.nextTick,
@@ -1314,7 +1343,7 @@ var requirejs, require, define;
                     each(cfg.packages, function (pkgObj) {
                         var location, name;
 
-                        pkgObj = typeof pkgObj === 'string' ? { name: pkgObj } : pkgObj;
+                        pkgObj = typeof pkgObj === 'string' ? {name: pkgObj} : pkgObj;
 
                         name = pkgObj.name;
                         location = pkgObj.location;
@@ -1341,7 +1370,7 @@ var requirejs, require, define;
                     //late to modify them, and ignore unnormalized ones
                     //since they are transient.
                     if (!mod.inited && !mod.map.unnormalized) {
-                        mod.map = makeModuleMap(id);
+                        mod.map = makeModuleMap(id, null, true);
                     }
                 });
 
@@ -1477,6 +1506,7 @@ var requirejs, require, define;
                         var map = makeModuleMap(id, relMap, true),
                             mod = getOwn(registry, id);
 
+                        mod.undefed = true;
                         removeScript(id);
 
                         delete defined[id];
@@ -1487,10 +1517,11 @@ var requirejs, require, define;
                         //in array so that the splices do not
                         //mess up the iteration.
                         eachReverse(defQueue, function(args, i) {
-                            if(args[0] === id) {
+                            if (args[0] === id) {
                                 defQueue.splice(i, 1);
                             }
                         });
+                        delete context.defQueueMap[id];
 
                         if (mod) {
                             //Hold on to listeners in case the
@@ -1552,6 +1583,7 @@ var requirejs, require, define;
 
                     callGetModule(args);
                 }
+                context.defQueueMap = {};
 
                 //Do this after the cycle of callGetModule in case the result
                 //of those calls/init calls changes the registry.
@@ -1687,7 +1719,21 @@ var requirejs, require, define;
             onScriptError: function (evt) {
                 var data = getScriptData(evt);
                 if (!hasPathFallback(data.id)) {
-                    return onError(makeError('scripterror', 'Script error for: ' + data.id, evt, [data.id]));
+                    var parents = [];
+                    eachProp(registry, function(value, key) {
+                        if (key.indexOf('_@r') !== 0) {
+                            each(value.depMaps, function(depMap) {
+                                if (depMap.id === data.id) {
+                                    parents.push(key);
+                                }
+                                return true;
+                            });
+                        }
+                    });
+                    return onError(makeError('scripterror', 'Script error for "' + data.id +
+                                             (parents.length ?
+                                             '", needed by: ' + parents.join(', ') :
+                                             '"'), evt, [data.id]));
                 }
             }
         };
@@ -1846,6 +1892,9 @@ var requirejs, require, define;
         if (isBrowser) {
             //In the browser so use a script tag
             node = req.createNode(config, moduleName, url);
+            if (config.onNodeCreated) {
+                config.onNodeCreated(node, config, moduleName, url);
+            }
 
             node.setAttribute('data-requirecontext', context.contextName);
             node.setAttribute('data-requiremodule', moduleName);
@@ -1911,9 +1960,9 @@ var requirejs, require, define;
                 //In a web worker, use importScripts. This is not a very
                 //efficient use of importScripts, importScripts will block until
                 //its script is downloaded and evaluated. However, if web workers
-                //are in play, the expectation that a build has been done so that
-                //only one script needs to be loaded anyway. This may need to be
-                //reevaluated if other use cases become common.
+                //are in play, the expectation is that a build has been done so
+                //that only one script needs to be loaded anyway. This may need
+                //to be reevaluated if other use cases become common.
                 importScripts(url);
 
                 //Account for anonymous modules
@@ -1974,7 +2023,7 @@ var requirejs, require, define;
                 //like a module name.
                 mainScript = mainScript.replace(jsSuffixRegExp, '');
 
-                 //If mainScript is still a path, fall back to dataMain
+                //If mainScript is still a path, fall back to dataMain
                 if (req.jsExtRegExp.test(mainScript)) {
                     mainScript = dataMain;
                 }
@@ -2053,13 +2102,17 @@ var requirejs, require, define;
         //where the module name is not known until the script onload event
         //occurs. If no context, use the global queue, and get it processed
         //in the onscript load callback.
-        (context ? context.defQueue : globalDefQueue).push([name, deps, callback]);
+        if (context) {
+            context.defQueue.push([name, deps, callback]);
+            context.defQueueMap[name] = true;
+        } else {
+            globalDefQueue.push([name, deps, callback]);
+        }
     };
 
     define.amd = {
         jQuery: true
     };
-
 
     /**
      * Executes the text. Normally just uses eval, but can be modified
@@ -2078,6 +2131,199 @@ var requirejs, require, define;
 
 define("../lib/requirejs/require", function(){});
 
+(function() {
+    var root;
+
+	if (typeof window === 'object' && window) {
+		root = window;
+	} else {
+		root = global;
+	}
+
+	if (typeof module !== 'undefined' && module.exports) {
+		module.exports = root.Promise ? root.Promise : Promise;
+	} else if (!root.Promise) {
+		root.Promise = Promise;
+	}
+
+	// Use polyfill for setImmediate for performance gains
+	var asap = root.setImmediate || function(fn) { setTimeout(fn, 1); };
+
+	// Polyfill for Function.prototype.bind
+	function bind(fn, thisArg) {
+		return function() {
+			fn.apply(thisArg, arguments);
+		}
+	}
+
+	var isArray = Array.isArray || function(value) { return Object.prototype.toString.call(value) === "[object Array]" };
+
+	function Promise(fn) {
+		if (typeof this !== 'object') throw new TypeError('Promises must be constructed via new');
+		if (typeof fn !== 'function') throw new TypeError('not a function');
+		this._state = null;
+		this._value = null;
+		this._deferreds = []
+
+		doResolve(fn, bind(resolve, this), bind(reject, this))
+	}
+
+	function handle(deferred) {
+		var me = this;
+		if (this._state === null) {
+			this._deferreds.push(deferred);
+			return
+		}
+		asap(function() {
+			var cb = me._state ? deferred.onFulfilled : deferred.onRejected
+			if (cb === null) {
+				(me._state ? deferred.resolve : deferred.reject)(me._value);
+				return;
+			}
+			var ret;
+			try {
+				ret = cb(me._value);
+			}
+			catch (e) {
+				deferred.reject(e);
+				return;
+			}
+			deferred.resolve(ret);
+		})
+	}
+
+	function resolve(newValue) {
+		try { //Promise Resolution Procedure: https://github.com/promises-aplus/promises-spec#the-promise-resolution-procedure
+			if (newValue === this) throw new TypeError('A promise cannot be resolved with itself.');
+			if (newValue && (typeof newValue === 'object' || typeof newValue === 'function')) {
+				var then = newValue.then;
+				if (typeof then === 'function') {
+					doResolve(bind(then, newValue), bind(resolve, this), bind(reject, this));
+					return;
+				}
+			}
+			this._state = true;
+			this._value = newValue;
+			finale.call(this);
+		} catch (e) { reject.call(this, e); }
+	}
+
+	function reject(newValue) {
+		this._state = false;
+		this._value = newValue;
+		finale.call(this);
+	}
+
+	function finale() {
+		for (var i = 0, len = this._deferreds.length; i < len; i++) {
+			handle.call(this, this._deferreds[i]);
+		}
+		this._deferreds = null;
+	}
+
+	function Handler(onFulfilled, onRejected, resolve, reject){
+		this.onFulfilled = typeof onFulfilled === 'function' ? onFulfilled : null;
+		this.onRejected = typeof onRejected === 'function' ? onRejected : null;
+		this.resolve = resolve;
+		this.reject = reject;
+	}
+
+	/**
+	 * Take a potentially misbehaving resolver function and make sure
+	 * onFulfilled and onRejected are only called once.
+	 *
+	 * Makes no guarantees about asynchrony.
+	 */
+	function doResolve(fn, onFulfilled, onRejected) {
+		var done = false;
+		try {
+			fn(function (value) {
+				if (done) return;
+				done = true;
+				onFulfilled(value);
+			}, function (reason) {
+				if (done) return;
+				done = true;
+				onRejected(reason);
+			})
+		} catch (ex) {
+			if (done) return;
+			done = true;
+			onRejected(ex);
+		}
+	}
+
+	Promise.prototype['catch'] = function (onRejected) {
+		return this.then(null, onRejected);
+	};
+
+	Promise.prototype.then = function(onFulfilled, onRejected) {
+		var me = this;
+		return new Promise(function(resolve, reject) {
+			handle.call(me, new Handler(onFulfilled, onRejected, resolve, reject));
+		})
+	};
+
+	Promise.all = function () {
+		var args = Array.prototype.slice.call(arguments.length === 1 && isArray(arguments[0]) ? arguments[0] : arguments);
+
+		return new Promise(function (resolve, reject) {
+			if (args.length === 0) return resolve([]);
+			var remaining = args.length;
+			function res(i, val) {
+				try {
+					if (val && (typeof val === 'object' || typeof val === 'function')) {
+						var then = val.then;
+						if (typeof then === 'function') {
+							then.call(val, function (val) { res(i, val) }, reject);
+							return;
+						}
+					}
+					args[i] = val;
+					if (--remaining === 0) {
+						resolve(args);
+					}
+				} catch (ex) {
+					reject(ex);
+				}
+			}
+			for (var i = 0; i < args.length; i++) {
+				res(i, args[i]);
+			}
+		});
+	};
+
+	Promise.resolve = function (value) {
+		if (value && typeof value === 'object' && value.constructor === Promise) {
+			return value;
+		}
+
+		return new Promise(function (resolve) {
+			resolve(value);
+		});
+	};
+
+	Promise.reject = function (value) {
+		return new Promise(function (resolve, reject) {
+			reject(value);
+		});
+	};
+
+	Promise.race = function (values) {
+		return new Promise(function (resolve, reject) {
+			for(var i = 0, len = values.length; i < len; i++) {
+				values[i].then(resolve, reject);
+			}
+		});
+	};
+})();
+define("promise", (function (global) {
+    return function () {
+        var ret, fn;
+        return ret || global.Promise;
+    };
+}(this)));
+
 require.config({
 	'baseUrl': './',
 	'paths': {
@@ -2088,31 +2334,41 @@ require.config({
 		// 3rd party
 		'markdown':'../lib/markdown/lib/markdown',
 		'gyro':'../lib/gyro.js/js/gyro',
+		'promise':'../lib/promise-polyfill/Promise', // Fuck you IE
 		'object-store':'../lib/object-store/ObjectStore',
 		'superagent':                 '../lib/superagent/superagent',
 		'base64':                 '../lib/js-base64/base64',
+		'tiny-emitter':                 '../lib/tiny-emitter/dist/tinyemitter',
 
-		'facebook': '//connect.facebook.net/en_US/all'
+		// 'facebook': '//connect.facebook.net/en_US/all'
+		'youtubePlayer': '//www.youtube.com/player_api'
 	},
 	'packages': [
 
+		{ name: 'core',                     location: 'packages/core/src'},
 		{ name: 'input-manager',            location: 'packages/input-manager/src'},
 		{ name: 'output-manager',           location: 'packages/output-manager/src'},
 		{ name: 'command-manager',          location: 'packages/command-manager/src'},
 		{ name: 'window-manager',           location: 'packages/window-manager/src'},
 		{ name: 'request-manager',          location: 'packages/request-manager/src'},
 		{ name: 'sensor-manager',           location: 'packages/sensor-manager/src'},
+		{ name: 'portfolio-manager',        location: 'packages/portfolio-manager/src'},
+
 		{ name: 'controllers',              location: 'packages/controllers/src'},
-		{ name: 'portfolio',                location: 'packages/portfolio/src'},
-		{ name: 'bubble',                   location: 'lib/bubble/src'},
 		{ name: 'canvases',                 location: 'packages/canvases/src'},
+		{ name: 'panvas',                   location: 'packages/panvas/src'},
 
 		// 3rd party
-		{ name: 'minimist',                 location: 'packages/minimist/src'}
+		{ name: 'minimist',                 location: 'packages/minimist/src'},
 
+		//{ name: 'portfolio',                location: 'http://portfolio'}
+		{ name: 'portfolio',                location: 'packages/portfolio/src'}
 	],
 
 	shim: {
+		promise: {
+			exports: 'Promise'
+		},
 		markdown: {
 			exports: 'markdown'
 		},
@@ -2125,8 +2381,215 @@ require.config({
 	}
 });
 
+// Make sure to load all the polyfills first, only after they are loaded, start the main application
+require([
+	'promise'
+], function() {
+});
 
 define("bootstrap", function(){});
+
+/*
+ * $Id: base64.js,v 2.15 2014/04/05 12:58:57 dankogai Exp dankogai $
+ *
+ *  Licensed under the MIT license.
+ *    http://opensource.org/licenses/mit-license
+ *
+ *  References:
+ *    http://en.wikipedia.org/wiki/Base64
+ */
+
+(function(global) {
+    'use strict';
+    // existing version for noConflict()
+    var _Base64 = global.Base64;
+    var version = "2.1.9";
+    // if node.js, we use Buffer
+    var buffer;
+    if (typeof module !== 'undefined' && module.exports) {
+        try {
+            buffer = require('buffer').Buffer;
+        } catch (err) {}
+    }
+    // constants
+    var b64chars
+        = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    var b64tab = function(bin) {
+        var t = {};
+        for (var i = 0, l = bin.length; i < l; i++) t[bin.charAt(i)] = i;
+        return t;
+    }(b64chars);
+    var fromCharCode = String.fromCharCode;
+    // encoder stuff
+    var cb_utob = function(c) {
+        if (c.length < 2) {
+            var cc = c.charCodeAt(0);
+            return cc < 0x80 ? c
+                : cc < 0x800 ? (fromCharCode(0xc0 | (cc >>> 6))
+                                + fromCharCode(0x80 | (cc & 0x3f)))
+                : (fromCharCode(0xe0 | ((cc >>> 12) & 0x0f))
+                   + fromCharCode(0x80 | ((cc >>>  6) & 0x3f))
+                   + fromCharCode(0x80 | ( cc         & 0x3f)));
+        } else {
+            var cc = 0x10000
+                + (c.charCodeAt(0) - 0xD800) * 0x400
+                + (c.charCodeAt(1) - 0xDC00);
+            return (fromCharCode(0xf0 | ((cc >>> 18) & 0x07))
+                    + fromCharCode(0x80 | ((cc >>> 12) & 0x3f))
+                    + fromCharCode(0x80 | ((cc >>>  6) & 0x3f))
+                    + fromCharCode(0x80 | ( cc         & 0x3f)));
+        }
+    };
+    var re_utob = /[\uD800-\uDBFF][\uDC00-\uDFFFF]|[^\x00-\x7F]/g;
+    var utob = function(u) {
+        return u.replace(re_utob, cb_utob);
+    };
+    var cb_encode = function(ccc) {
+        var padlen = [0, 2, 1][ccc.length % 3],
+        ord = ccc.charCodeAt(0) << 16
+            | ((ccc.length > 1 ? ccc.charCodeAt(1) : 0) << 8)
+            | ((ccc.length > 2 ? ccc.charCodeAt(2) : 0)),
+        chars = [
+            b64chars.charAt( ord >>> 18),
+            b64chars.charAt((ord >>> 12) & 63),
+            padlen >= 2 ? '=' : b64chars.charAt((ord >>> 6) & 63),
+            padlen >= 1 ? '=' : b64chars.charAt(ord & 63)
+        ];
+        return chars.join('');
+    };
+    var btoa = global.btoa ? function(b) {
+        return global.btoa(b);
+    } : function(b) {
+        return b.replace(/[\s\S]{1,3}/g, cb_encode);
+    };
+    var _encode = buffer ? function (u) {
+        return (u.constructor === buffer.constructor ? u : new buffer(u))
+        .toString('base64')
+    }
+    : function (u) { return btoa(utob(u)) }
+    ;
+    var encode = function(u, urisafe) {
+        return !urisafe
+            ? _encode(String(u))
+            : _encode(String(u)).replace(/[+\/]/g, function(m0) {
+                return m0 == '+' ? '-' : '_';
+            }).replace(/=/g, '');
+    };
+    var encodeURI = function(u) { return encode(u, true) };
+    // decoder stuff
+    var re_btou = new RegExp([
+        '[\xC0-\xDF][\x80-\xBF]',
+        '[\xE0-\xEF][\x80-\xBF]{2}',
+        '[\xF0-\xF7][\x80-\xBF]{3}'
+    ].join('|'), 'g');
+    var cb_btou = function(cccc) {
+        switch(cccc.length) {
+        case 4:
+            var cp = ((0x07 & cccc.charCodeAt(0)) << 18)
+                |    ((0x3f & cccc.charCodeAt(1)) << 12)
+                |    ((0x3f & cccc.charCodeAt(2)) <<  6)
+                |     (0x3f & cccc.charCodeAt(3)),
+            offset = cp - 0x10000;
+            return (fromCharCode((offset  >>> 10) + 0xD800)
+                    + fromCharCode((offset & 0x3FF) + 0xDC00));
+        case 3:
+            return fromCharCode(
+                ((0x0f & cccc.charCodeAt(0)) << 12)
+                    | ((0x3f & cccc.charCodeAt(1)) << 6)
+                    |  (0x3f & cccc.charCodeAt(2))
+            );
+        default:
+            return  fromCharCode(
+                ((0x1f & cccc.charCodeAt(0)) << 6)
+                    |  (0x3f & cccc.charCodeAt(1))
+            );
+        }
+    };
+    var btou = function(b) {
+        return b.replace(re_btou, cb_btou);
+    };
+    var cb_decode = function(cccc) {
+        var len = cccc.length,
+        padlen = len % 4,
+        n = (len > 0 ? b64tab[cccc.charAt(0)] << 18 : 0)
+            | (len > 1 ? b64tab[cccc.charAt(1)] << 12 : 0)
+            | (len > 2 ? b64tab[cccc.charAt(2)] <<  6 : 0)
+            | (len > 3 ? b64tab[cccc.charAt(3)]       : 0),
+        chars = [
+            fromCharCode( n >>> 16),
+            fromCharCode((n >>>  8) & 0xff),
+            fromCharCode( n         & 0xff)
+        ];
+        chars.length -= [0, 0, 2, 1][padlen];
+        return chars.join('');
+    };
+    var atob = global.atob ? function(a) {
+        return global.atob(a);
+    } : function(a){
+        return a.replace(/[\s\S]{1,4}/g, cb_decode);
+    };
+    var _decode = buffer ? function(a) {
+        return (a.constructor === buffer.constructor
+                ? a : new buffer(a, 'base64')).toString();
+    }
+    : function(a) { return btou(atob(a)) };
+    var decode = function(a){
+        return _decode(
+            String(a).replace(/[-_]/g, function(m0) { return m0 == '-' ? '+' : '/' })
+                .replace(/[^A-Za-z0-9\+\/]/g, '')
+        );
+    };
+    var noConflict = function() {
+        var Base64 = global.Base64;
+        global.Base64 = _Base64;
+        return Base64;
+    };
+    // export Base64
+    global.Base64 = {
+        VERSION: version,
+        atob: atob,
+        btoa: btoa,
+        fromBase64: decode,
+        toBase64: encode,
+        utob: utob,
+        encode: encode,
+        encodeURI: encodeURI,
+        btou: btou,
+        decode: decode,
+        noConflict: noConflict
+    };
+    // if ES5 is available, make Base64.extendString() available
+    if (typeof Object.defineProperty === 'function') {
+        var noEnum = function(v){
+            return {value:v,enumerable:false,writable:true,configurable:true};
+        };
+        global.Base64.extendString = function () {
+            Object.defineProperty(
+                String.prototype, 'fromBase64', noEnum(function () {
+                    return decode(this)
+                }));
+            Object.defineProperty(
+                String.prototype, 'toBase64', noEnum(function (urisafe) {
+                    return encode(this, urisafe)
+                }));
+            Object.defineProperty(
+                String.prototype, 'toBase64URI', noEnum(function () {
+                    return encode(this, true)
+                }));
+        };
+    }
+    // that's it!
+    if (global['Meteor']) {
+       Base64 = global.Base64; // for normal export in Meteor.js
+    }
+})(this);
+
+define("base64", (function (global) {
+    return function () {
+        var ret, fn;
+        return ret || global.Base64;
+    };
+}(this)));
 
 define('minimist/main',[
 ], function (
@@ -2358,23 +2821,53 @@ define('minimist/main',[
 });
 define('minimist', ['minimist/main'], function (main) { return main; });
 
+define('input-manager/Request',[
+	'minimist'
+], function (
+	minimist
+) {
+
+	function Request (value) {
+		if(typeof value !== 'string')
+			throw new Error('Invalid argument for new Request, must be a string');
+
+		var minimized = minimist((value || '').split(' ')),
+			route = [],
+			options = {};
+
+		Object.keys(minimized).forEach(function(key) {
+			if(key === '_')
+				route = minimized[key].map(function(val) {
+					return (''+val).trim();
+				});
+			else
+				options[key] = minimized[key];
+		});
+
+		this.input = value;
+		this.route = route;
+		this.options = options;
+	}
+
+	return Request;
+});
 define('input-manager/InputCursor',[
 	'minimist'
 ], function (
 	minimist
 ) {
-	
+
+	var CSS_CLASS = 'input__overlay__cursor';
+
 	function InputCursor () {
 		this.element = this.createElement();
-
-
 		this.start();
 	}
 
 
 	InputCursor.prototype.createElement = function() {
 		var inputCursor = document.createElement('span');
-		inputCursor.classList.add('input__cursor');
+		inputCursor.classList.add(CSS_CLASS);
 
 		return inputCursor;
 	};
@@ -2387,19 +2880,19 @@ define('input-manager/InputCursor',[
 	};
 
 	InputCursor.prototype.blink = function() {
-		this.element.classList.remove('input__cursor--pinned');
-		this.element.classList.remove('input__cursor--hidden');
-		this.element.classList.add('input__cursor--blinking');
+		this.element.classList.remove(CSS_CLASS + '--pinned');
+		this.element.classList.remove(CSS_CLASS + '--hidden');
+		this.element.classList.add(CSS_CLASS + '--blinking');
 	};
 	InputCursor.prototype.pin = function() {
-		this.element.classList.add('input__cursor--pinned');
-		this.element.classList.remove('input__cursor--hidden');
-		this.element.classList.remove('input__cursor--blinking');
+		this.element.classList.add(CSS_CLASS + '--pinned');
+		this.element.classList.remove(CSS_CLASS + '--hidden');
+		this.element.classList.remove(CSS_CLASS + '--blinking');
 	};
 	InputCursor.prototype.hide = function() {
-		this.element.classList.remove('input__cursor--pinned');
-		this.element.classList.add('input__cursor--hidden');
-		this.element.classList.remove('input__cursor--blinking');
+		this.element.classList.remove(CSS_CLASS + '--pinned');
+		this.element.classList.add(CSS_CLASS + '--hidden');
+		this.element.classList.remove(CSS_CLASS + '--blinking');
 	};
 
 	return InputCursor;
@@ -2409,40 +2902,34 @@ define('input-manager/InputSuggestions',[], function () {
 		this.element = this.createElement();
 	}
 
-	InputSuggestions.prototype.getSuggestionsElement = function() {
-		if(!this.elementSuggestions) {
-			this.elementSuggestions = document.createElement('span');
-			this.elementSuggestions.classList.add('input-explain__suggestions');
-		}
-		return this.elementSuggestions;
-	};
-
 	InputSuggestions.prototype.createElement = function() {
-		return this.getSuggestionsElement();
+		var el = document.createElement('span');
+		el.classList.add('input__overlay__suggestions');
+		return el;
 	};
 
 	InputSuggestions.prototype.populateFromCommands = function(commands) {
-		if(!this.elementSuggestions)
-			return;
+		if(!this.element)
+			this.element = this.createElement();
 
-		this.elementSuggestions.innerHTML = '';
+		this.element.innerHTML = '';
 		commands.forEach(function(command, i) {
 			var aElement = document.createElement('a');
-			aElement.setAttribute('href', '/' + command.getRoute().slice(1).join('/'));
+			aElement.setAttribute('command', command.getRoute().slice(1).join(' '));
 			aElement.appendChild(document.createTextNode(command.name));
-			aElement.classList.add('input-explain__suggestion');
+			aElement.classList.add('input__overlay__suggestion');
 
-			this.elementSuggestions.appendChild(aElement);
+			this.element.appendChild(aElement);
 
 			if(i < commands.length - 1)
-				this.elementSuggestions.appendChild(document.createTextNode('/'));
+				this.element.appendChild(document.createTextNode('/'));
 		}.bind(this));
 	};
 
 	return InputSuggestions;
 });
 define('input-manager/InputHistory',[], function () {
-	
+
 	function InputHistory (submitCallback) {
 		this.submitted = [];
 		this.pointer = 0;
@@ -2498,18 +2985,25 @@ define('input-manager/InputHistory',[], function () {
 	return InputHistory;
 });
 define('input-manager/InputManager',[
-	'minimist',
+	'./Request',
 
 	'./InputCursor',
 	'./InputSuggestions',
 	'./InputHistory'
 ], function (
-	minimist,
+	Request,
 
 	InputCursor,
 	InputSuggestions,
 	InputHistory
 ) {
+
+	/*
+	 * @NOTICE: many of the destroyer functions returned by 'onChange', 'onSubmit' etc. use the "self" variable,
+	 *          which is actually called "this". Probably gonna throw out all this code anyway when switching to eventemitter
+	 *
+	 */
+
 	function InputManager () {
 		this.cursor = new InputCursor();
 		this.suggestions = new InputSuggestions();
@@ -2519,12 +3013,40 @@ define('input-manager/InputManager',[
 		this.changeCallbacks = [];
 		this.magicHrefCallbacks = [];
 
+		// @notice: also creates this.fieldElement and overlayTextElement
 		this.element = this.createElement();
 
 		window.addEventListener('keydown', function(event) {
 			if(event.keyCode === 13 && this.getValue().trim())
 				this.submitFromForm(event);
 		}.bind(this));
+
+
+		window.addEventListener('click', function(event) {
+			this.focusField(true);
+		}.bind(this));
+
+
+		this.fieldElement.addEventListener('blur', function(event) {
+			this.focusField(true);
+		}.bind(this));
+
+		var lastValue = undefined;
+
+		var changeDetectionLoop = (function () {
+			var currentValue = this.getValue(true);
+			if(currentValue === lastValue)
+				return requestAnimationFrame(changeDetectionLoop);
+
+			this.change(currentValue, false);
+
+			lastValue = currentValue;
+
+			requestAnimationFrame(changeDetectionLoop.bind(this));
+		}).bind(this);
+
+
+		changeDetectionLoop();
 	}
 
 	InputManager.prototype.createElement= function() {
@@ -2533,51 +3055,20 @@ define('input-manager/InputManager',[
 		inputPrefix.classList.add('input__prefix');
 		inputPrefix.innerHTML = '$';
 
-
-		var inputOverlayText = document.createElement('span');
-		inputOverlayText.classList.add('input__overlay__text');
-
-
-
-		var inputOverlay = document.createElement('div');
-		inputOverlay.appendChild(inputOverlayText);
-
-		inputOverlay.appendChild(this.cursor.element);
-		inputOverlay.appendChild(this.suggestions.element);
-
-		inputOverlay.classList.add('input__overlay');
-		//
-
 		var inputField = document.createElement('span');
 		inputField.classList.add('input__field');
 		inputField.setAttribute('contenteditable', 'true');
-		inputField.addEventListener('blur', function(event) {
-			this.focusField(true);
-		}.bind(this));
-
-		var lastValue = undefined;
-
-		var updateOverlayFromField = (function(newValue, oldValue) {
-				var parsed = this.parseCommand(newValue);
-
-				this.changeCallbacks.forEach(function(callback) {
-					callback(parsed);
-				});
-
-				inputOverlayText.innerHTML = inputField.textContent;
-			}).bind(this),
-			changeDetectionLoop = (function () {
-				var currentValue = this.getValue(true);
-				if(currentValue === lastValue)
-					return requestAnimationFrame(changeDetectionLoop);
-
-				updateOverlayFromField(currentValue, lastValue);
-				lastValue = currentValue;
-
-				requestAnimationFrame(changeDetectionLoop.bind(this));
-			}).bind(this);
-
 		this.fieldElement = inputField;
+
+		var inputOverlayText = document.createElement('span');
+		inputOverlayText.classList.add('input__overlay__text');
+		this.overlayTextElement = inputOverlayText;
+
+		var inputOverlay = document.createElement('div');
+		inputOverlay.appendChild(inputOverlayText);
+		inputOverlay.appendChild(this.cursor.element);
+		inputOverlay.appendChild(this.suggestions.element);
+		inputOverlay.classList.add('input__overlay');
 
 		var inputText = document.createElement('div');
 		inputText.classList.add('input__text');
@@ -2586,13 +3077,9 @@ define('input-manager/InputManager',[
 
 		var inputWrapper = document.getElementById('input');
 		inputWrapper.classList.add('input');
-//		inputWrapper.setAttribute('action', '#');
-//		inputWrapper.addEventListener('submit', this.submitFromForm.bind(this));
 
 		inputWrapper.appendChild(inputPrefix);
 		inputWrapper.appendChild(inputText);
-
-		changeDetectionLoop();
 
 		return inputWrapper;
 	};
@@ -2614,38 +3101,19 @@ define('input-manager/InputManager',[
 		this.fieldElement.focus();
 	};
 	InputManager.prototype.getValue = function(raw) {
-		return raw? this.fieldElement.textContent : this.fieldElement.textContent.replace( /\s\s+/g, ' ');
+		return raw ? this.fieldElement.textContent : this.fieldElement.textContent.replace( /\s\s+/g, ' ');
 	};
 
-	InputManager.prototype.clearValue = function() {
-		this.fieldElement.innerHTML = '';
+	InputManager.prototype.clearValue = function(clearToText) {
+		this.fieldElement.innerHTML = clearToText || '';
 	};
 
 	InputManager.prototype.parseCommand = function(value) {
-		var minimized = minimist((value || '').split(' ')),
-			route = [],
-			options = {};
-
-		Object.keys(minimized).forEach(function(key) {
-			if(key === '_')
-				route = minimized[key].map(function(val) { return val.trim(); });
-			else
-				options[key] = minimized[key];
-		});
-
-		return {
-			input: value,
-			route: route,
-			options: options
-		};
+		if(!(value instanceof Request))
+			return new Request(value);
+		else return value;
 	};
 
-	InputManager.prototype.change = function() {
-
-		this.changeCallbacks.forEach(function(callback) {
-			callback(parsed);
-		});
-	};
 
 	InputManager.prototype.submit = function(value, omitCallbacks) {
 		value = value || this.getValue();
@@ -2653,10 +3121,9 @@ define('input-manager/InputManager',[
 
 		this.history.onwardIfNotAtPointer(value);
 
-		if(!omitCallbacks)
-			this.submitCallbacks.forEach(function(callback) {
-				callback(value);
-			});
+		this.submitCallbacks.forEach(function(callback) {
+			callback(value);
+		});
 	};
 
 	InputManager.prototype.submitFromForm = function(event) {
@@ -2676,6 +3143,34 @@ define('input-manager/InputManager',[
 		}.bind(this);
 	};
 
+
+	/**
+	 * The act of changing what's displayed as the input, leaves the actual content-editable untouched.
+	 *
+	 * @param {String}  newValue ~ Raw, that means includes whitespace etc.
+	 * @param {Boolean} clear    ~ Overwrite the actual fieldElement value as well,
+	 *                             MUST omit when change() is triggered from changeDetectionLoop
+	 */
+	InputManager.prototype.change = function(newValue, clear) {
+
+		var parsed = this.parseCommand(newValue);
+
+		this.changeCallbacks.forEach(function(callback) {
+			callback(parsed);
+		});
+
+		if(clear) {
+			this.clearValue(newValue);
+		}
+
+		this.overlayTextElement.innerHTML = parsed.input;
+	};
+
+	/**
+	 * Register a callback for the event a change occurs.
+	 * @param callback
+	 * @returns {function(this:InputManager)} Destroyer function
+	 */
 	InputManager.prototype.onChange = function(callback) {
 		this.changeCallbacks.push(callback);
 
@@ -2683,7 +3178,7 @@ define('input-manager/InputManager',[
 			self.changeCallbacks.splice(self.changeCallbacks.indexOf(callback), 1);
 		}.bind(this);
 	};
-	
+
 	InputManager.prototype.onMagicHref = function(callback) {
 		this.magicHrefCallbacks.push(callback);
 
@@ -2694,30 +3189,23 @@ define('input-manager/InputManager',[
 
 	/**
 	 * "submitFromMagicHref", but only if given event is actually a relevant click on
-	 * an a@href='/equivelant/route/for/query'.
-	 * @param event
-	 * @param callback
+	 * an a@command='command or whatever --yes'.
 	 */
 	InputManager.prototype.captureMagicHref = function(parent) {
 		parent.addEventListener('click', function(event) {
 			var target = event.target,
-				href = target.getAttribute('href');
+				href = target.getAttribute('command');
 
 			// determine elegibility
-			if(target.nodeName.toLowerCase() !== 'a')
-				return;
 			if(!href)
-				return;
-			if(href.indexOf('/') !== 0)
 				return;
 
 			// submit
-			var equivelantInput = href.substr(1).split('/').join(' ').trim(),
-				parsedInput = this.parseCommand(equivelantInput);
+			var parsedInput = this.parseCommand(href);
 
 			// submit some more
 			this.magicHrefCallbacks.forEach(function(magicHrefCallback) {
-				magicHrefCallback(parsedInput );
+				magicHrefCallback(parsedInput);
 			});
 
 			// stop
@@ -2741,7 +3229,7 @@ define('input-manager/main',[
 define('input-manager', ['input-manager/main'], function (main) { return main; });
 
 /**
- * @license RequireJS text 2.0.12 Copyright (c) 2010-2014, The Dojo Foundation All Rights Reserved.
+ * @license RequireJS text 2.0.14 Copyright (c) 2010-2014, The Dojo Foundation All Rights Reserved.
  * Available via the MIT or new BSD license.
  * see: http://github.com/requirejs/text for details
  */
@@ -2765,7 +3253,7 @@ define('text',['module'], function (module) {
         masterConfig = (module.config && module.config()) || {};
 
     text = {
-        version: '2.0.12',
+        version: '2.0.14',
 
         strip: function (content) {
             //Strips <?xml ...?> declarations so that external SVG and XML
@@ -2827,13 +3315,13 @@ define('text',['module'], function (module) {
         parseName: function (name) {
             var modName, ext, temp,
                 strip = false,
-                index = name.indexOf("."),
+                index = name.lastIndexOf("."),
                 isRelative = name.indexOf('./') === 0 ||
                              name.indexOf('../') === 0;
 
             if (index !== -1 && (!isRelative || index > 1)) {
                 modName = name.substring(0, index);
-                ext = name.substring(index + 1, name.length);
+                ext = name.substring(index + 1);
             } else {
                 modName = name;
             }
@@ -2986,7 +3474,8 @@ define('text',['module'], function (module) {
             typeof process !== "undefined" &&
             process.versions &&
             !!process.versions.node &&
-            !process.versions['node-webkit'])) {
+            !process.versions['node-webkit'] &&
+            !process.versions['atom-shell'])) {
         //Using special require.nodeRequire, something added by r.js.
         fs = require.nodeRequire('fs');
 
@@ -2994,7 +3483,7 @@ define('text',['module'], function (module) {
             try {
                 var file = fs.readFileSync(url, 'utf8');
                 //Remove BOM (Byte Mark Order) from utf8 files if it is there.
-                if (file.indexOf('\uFEFF') === 0) {
+                if (file[0] === '\uFEFF') {
                     file = file.substring(1);
                 }
                 callback(file);
@@ -3131,36 +3620,38 @@ define('text',['module'], function (module) {
     return text;
 });
 
-define('text!output-manager/headerFont.json',[],function () { return '{\n\t"map": "abcdefghijklmnopqrstuvwxyz!_-|\\\\/?.,",\n\t"matrix": [\n\t\t"    ",\n\t\t" /\\\\ ",\n\t\t"/~~\\\\",\n\t\t"    ",\n\t\t" __ ",\n\t\t"|__)",\n\t\t"|__)",\n\t\t"    ",\n\t\t" __ ",\n\t\t"/  `",\n\t\t"\\\\__,",\n\t\t"    ",\n\t\t" __ ",\n\t\t"|  \\\\",\n\t\t"|__/",\n\t\t"    ",\n\t\t" ___",\n\t\t"|__ ",\n\t\t"|___",\n\t\t"    ",\n\t\t" ___",\n\t\t"|__ ",\n\t\t"|   ",\n\t\t"    ",\n\t\t" __ ",\n\t\t"/ _`",\n\t\t"\\\\__>",\n\t\t"    ",\n\t\t"    ",\n\t\t"|__|",\n\t\t"|  |",\n\t\t"    ",\n\t\t" ",\n\t\t"|",\n\t\t"|",\n\t\t" ",\n\t\t"    ",\n\t\t"   |",\n\t\t"\\\\__/",\n\t\t"    ",\n\t\t"    ",\n\t\t"|__/",\n\t\t"|  \\\\",\n\t\t"    ",\n\t\t"    ",\n\t\t"|   ",\n\t\t"|___",\n\t\t"    ",\n\t\t"    ",\n\t\t"|\\\\/|",\n\t\t"|  |",\n\t\t"    ",\n\t\t"    ",\n\t\t"|\\\\ |",\n\t\t"| \\\\|",\n\t\t"    ",\n\t\t" __ ",\n\t\t"/  \\\\",\n\t\t"\\\\__/",\n\t\t"    ",\n\t\t" __ ",\n\t\t"|__)",\n\t\t"|   ",\n\t\t"    ",\n\t\t" __ ",\n\t\t"/  \\\\",\n\t\t"\\\\__X",\n\t\t"    ",\n\t\t" __ ",\n\t\t"|__)",\n\t\t"|  \\\\",\n\t\t"    ",\n\t\t" __ ",\n\t\t"/__`",\n\t\t".__/",\n\t\t"    ",\n\t\t"___",\n\t\t" | ",\n\t\t" | ",\n\t\t"   ",\n\t\t"    ",\n\t\t"|  |",\n\t\t"\\\\__/",\n\t\t"    ",\n\t\t"    ",\n\t\t"\\\\  /",\n\t\t" \\\\/ ",\n\t\t"    ",\n\t\t"    ",\n\t\t"|  |",\n\t\t"|/\\\\|",\n\t\t"    ",\n\t\t"   ",\n\t\t"\\\\_/",\n\t\t"/ \\\\",\n\t\t"   ",\n\t\t"   ",\n\t\t"\\\\ /",\n\t\t" | ",\n\t\t"   ",\n\t\t"__",\n\t\t" /",\n\t\t"/_",\n\t\t"  ",\n\t\t" ",\n\t\t"|",\n\t\t".",\n\t\t" ",\n\t\t"   ",\n\t\t"   ",\n\t\t"___",\n\t\t"   ",\n\t\t"  ",\n\t\t"__",\n\t\t"  ",\n\t\t"  ",\n\t\t"|",\n\t\t"|",\n\t\t"|",\n\t\t"|",\n\t\t"  ",\n\t\t"\\\\ ",\n\t\t" \\\\",\n\t\t"  ",\n\t\t"  ",\n\t\t" /",\n\t\t"/ ",\n\t\t"  ",\n\t\t"__ ",\n\t\t" _|",\n\t\t" . ",\n\t\t"   ",\n\t\t" ",\n\t\t" ",\n\t\t".",\n\t\t" ",\n\t\t" ",\n\t\t" ",\n\t\t".",\n\t\t"\'"\n\t],\n\t"height": 4\n}';});
+define('text!output-manager/headerFont.json',[],function () { return '{\n\t"map": " ()abcdefghijklmnopqrstuvwxyz!_-|\\\\/?.,",\n\t"matrix": [\n\t\t"  ",\n\t\t"  ",\n\t\t"  ",\n\t\t"  ",\n\n\t\t"/ ",\n\t\t"| ",\n\t\t"\\\\ ",\n\t\t"  ",\n\n\t\t"\\\\ ",\n\t\t" |",\n\t\t"/ ",\n\t\t"  ",\n\n\t\t"    ",\n\t\t" /\\\\ ",\n\t\t"/~~\\\\",\n\t\t"    ",\n\n\t\t" __ ",\n\t\t"|__)",\n\t\t"|__)",\n\t\t"    ",\n\n\t\t" __ ",\n\t\t"/  `",\n\t\t"\\\\__,",\n\t\t"    ",\n\n\t\t" __ ",\n\t\t"|  \\\\",\n\t\t"|__/",\n\t\t"    ",\n\n\t\t" ___",\n\t\t"|__ ",\n\t\t"|___",\n\t\t"    ",\n\n\t\t" ___",\n\t\t"|__ ",\n\t\t"|   ",\n\t\t"    ",\n\n\t\t" __ ",\n\t\t"/ _`",\n\t\t"\\\\__>",\n\t\t"    ",\n\n\t\t"    ",\n\t\t"|__|",\n\t\t"|  |",\n\t\t"    ",\n\n\t\t" ",\n\t\t"|",\n\t\t"|",\n\t\t" ",\n\n\t\t"    ",\n\t\t"   |",\n\t\t"\\\\__/",\n\t\t"    ",\n\n\t\t"    ",\n\t\t"|__/",\n\t\t"|  \\\\",\n\t\t"    ",\n\n\t\t"    ",\n\t\t"|   ",\n\t\t"|___",\n\t\t"    ",\n\n\t\t"    ",\n\t\t"|\\\\/|",\n\t\t"|  |",\n\t\t"    ",\n\n\t\t"    ",\n\t\t"|\\\\ |",\n\t\t"| \\\\|",\n\t\t"    ",\n\n\t\t" __ ",\n\t\t"/  \\\\",\n\t\t"\\\\__/",\n\t\t"    ",\n\n\t\t" __ ",\n\t\t"|__)",\n\t\t"|   ",\n\t\t"    ",\n\n\t\t" __ ",\n\t\t"/  \\\\",\n\t\t"\\\\__X",\n\t\t"    ",\n\n\t\t" __ ",\n\t\t"|__)",\n\t\t"|  \\\\",\n\t\t"    ",\n\n\t\t" __ ",\n\t\t"/__`",\n\t\t".__/",\n\t\t"    ",\n\n\t\t"___",\n\t\t" | ",\n\t\t" | ",\n\t\t"   ",\n\n\t\t"    ",\n\t\t"|  |",\n\t\t"\\\\__/",\n\t\t"    ",\n\n\t\t"    ",\n\t\t"\\\\  /",\n\t\t" \\\\/ ",\n\t\t"    ",\n\n\t\t"    ",\n\t\t"|  |",\n\t\t"|/\\\\|",\n\t\t"    ",\n\n\t\t"   ",\n\t\t"\\\\_/",\n\t\t"/ \\\\",\n\t\t"   ",\n\n\t\t"   ",\n\t\t"\\\\ /",\n\t\t" | ",\n\t\t"   ",\n\n\t\t"__",\n\t\t" /",\n\t\t"/_",\n\t\t"  ",\n\n\t\t" ",\n\t\t"|",\n\t\t".",\n\t\t" ",\n\n\t\t"   ",\n\t\t"   ",\n\t\t"___",\n\t\t"   ",\n\n\t\t"  ",\n\t\t"__",\n\t\t"  ",\n\t\t"  ",\n\n\t\t"|",\n\t\t"|",\n\t\t"|",\n\t\t"|",\n\n\t\t"  ",\n\t\t"\\\\ ",\n\t\t" \\\\",\n\t\t"  ",\n\n\t\t"  ",\n\t\t" /",\n\t\t"/ ",\n\t\t"  ",\n\n\t\t"__ ",\n\t\t" _|",\n\t\t" . ",\n\t\t"   ",\n\n\t\t" ",\n\t\t" ",\n\t\t".",\n\t\t" ",\n\n\t\t" ",\n\t\t" ",\n\t\t".",\n\t\t"\'"\n\t],\n\t"height": 4\n}';});
 
 define('output-manager/output/Output',[
+	'promise'
 ], function (
+	Promise
 ) {
 
 	function Output() {
 		throw new Error('Not implemented');
 	}
 
-	Output.prototype.render = function() {
+	Output.prototype.render = function(cb) {
 		if(this.element)
 			throw new Error ('Already rendered');
 
 		var renderedElement = this.onRender();
 
 		if(!(renderedElement instanceof Promise)) {
-			var synchronousElement = renderedElement;
-			renderedElement = new Promise(function(resolve, reject) {
-				setTimeout(function() {
-					resolve(synchronousElement);
-				}, 50);
-			}.bind(this));
+			this.element = renderedElement;
+			setTimeout(function() {
+				cb(this.element);
+			}.bind(this), 50);
+		} else {
+			renderedElement.then(function (element) {
+				this.element = element;
+				cb(this.element);
+			}.bind(this)).catch(function(error) {
+				console.error('Promised output render threw error: '+error.stack);
+			});
+
 		}
-
-		renderedElement.then(function(element) {
-			this.element = element;
-		}.bind(this));
-
-		return renderedElement;
 	};
 
 	Output.prototype.clear = function() {
@@ -3182,7 +3673,7 @@ define('output-manager/output/Output',[
 		prefixElement.classList.add('output-item__prefix');
 
 		var textElement = document.createElement('div');
-		textElement.innerHTML = text || this.text;
+		textElement.innerHTML = text || this.text || '';
 		textElement.classList.add('output-item__text');
 
 		var element = document.createElement('div');
@@ -3217,7 +3708,7 @@ define('output-manager/output/Output',[
 	};
 
 	Output.prototype.removeFlag = function(flag, element) {
-		if(!this.flags)
+		if(this.flags)
 			this.flags.splice(this.flags.indexOf(flag), 1);
 
 		element = element || this.element;
@@ -3349,21 +3840,21 @@ define('output-manager/output/KeyValueLog',[
 	Output
 	) {
 
-	function DebugLog(key, value) {
+	function KeyvalueLog(key, value) {
 		this.key = key;
 		this.value = value;
 	}
 
-	DebugLog.prototype = Object.create(Output.prototype);
-	DebugLog.prototype.constructor = DebugLog;
+	KeyvalueLog.prototype = Object.create(Output.prototype);
+	KeyvalueLog.prototype.constructor = KeyvalueLog;
 
-	DebugLog.prototype.onClear = function() {
+	KeyvalueLog.prototype.onClear = function() {
 
 	};
 
-	DebugLog.prototype.onRender = function() {
+	KeyvalueLog.prototype.onRender = function() {
 
-		return this.createElement('>', this.key, 'key-value', [this.value].filter(function(data) {
+		return this.createElement('>', this.key || '', 'key-value', [this.value].filter(function(data) {
 			return ['string', 'number', 'object'].indexOf(typeof data) >= 0;
 		})
 		.map(function(data) {
@@ -3374,12 +3865,14 @@ define('output-manager/output/KeyValueLog',[
 		}));
 	};
 
-	return DebugLog;
+	return KeyvalueLog;
 });
 
 define('output-manager/output/AsyncLog',[
+	'promise',
 	'./Output'
 ], function (
+	Promise,
 	Output
 	) {
 
@@ -3403,9 +3896,16 @@ define('output-manager/output/AsyncLog',[
 			startTime = new Date().getTime(),
 			promise = null;
 
+		spinnerElement.classList.add('output-item__spinner');
 		spinnerElement.innerHTML = 'Pending...';
 
-		if(typeof async === 'function') {
+		if(typeof async === 'number') {
+			promise = new Promise(function(res) {
+				setTimeout(function() {
+					res(element)
+				}, async || 100);
+			});
+		} else if(typeof async === 'function') {
 			promise = new Promise(function(res, rej) {
 				async(function() {
 					res(element)
@@ -3413,31 +3913,27 @@ define('output-manager/output/AsyncLog',[
 			});
 		} else if(async instanceof Promise) {
 			promise = async; // only works if this promise throws
-			throw new Error('Promise not (yet) supported');
+			//throw new Error('Promise not (yet) supported');
 		} else {
 			throw new Error('Unknown asynchronous log resolve type');
 		}
 
 		promise
 			.then(function() {
-				spinnerElement.innerHTML = (new Date().getTime()) - startTime;
+				spinnerElement.innerHTML = (new Date().getTime()) - startTime + ' ms';
 				this.addFlag('async-success');
 
 				if(typeof this.done === 'function')
 					this.done();
-
-				return element;
+				return spinnerElement;
 			}.bind(this))
 			.catch(function(e) {
 				spinnerElement.innerHTML = 'Failed';
 				this.addFlag('async-failed');
-			}.bind(this))
-//			.finally(function(e) {
-//				this.addFlag('async-done');
-//				this.removeFlag('async-pending');
-//				console.log(e);
-//			}.bind(this));
-
+				if(typeof this.done === 'function')
+					this.done();
+				return spinnerElement;
+			}.bind(this));
 		return promise;
 	};
 
@@ -3502,6 +3998,7 @@ define('output-manager/OutputManager',[
 		this.headerFont = new HeaderFont(JSON.parse(headerFont));
 		this.queue = [];
 		this.rendered = [];
+		this.onceQueueFlushedCallbacks = [];
 		this.flushing = false;
 		this.element = this.createElement();
 		this.renderCallbacks = [];
@@ -3532,36 +4029,36 @@ define('output-manager/OutputManager',[
 		if(this.flushing)
 			return;
 
-		if(!this.queue.length)
+		if(!this.queue.length) {
+			var next = false;
+			while(next = this.onceQueueFlushedCallbacks.shift()) {
+				next();
+			}
 			return;
+		}
 
 		var output = this.queue.shift();
 
 		this.flushing = true;
 
-		return output.render()
-			.then(function(renderedElement) {
-				this.element.appendChild(renderedElement);
+		return output.render(function(renderedElement) {
+			this.element.appendChild(renderedElement);
 
-				setTimeout(function() {
-					renderedElement.removeAttribute('style');
-				});
+			setTimeout(function() {
+				renderedElement.removeAttribute('style');
+			});
 
-				this.renderCallbacks.forEach(function(callback) {
-					callback(this, renderedElement);
-				}.bind(this));
-
-				this.rendered.push(output);
-
-				this.flushing = false;
-
-				this.scrollToBottom();
-				return this.renderQueuedOutput();
-			}.bind(this))
-			.catch(function(e) {
-				this.flushing = false;
-				this.error(e);
+			this.renderCallbacks.forEach(function(callback) {
+				callback(this, renderedElement);
 			}.bind(this));
+
+			this.rendered.push(output);
+
+			this.flushing = false;
+
+			this.scrollToBottom();
+			return this.renderQueuedOutput();
+		}.bind(this));
 	};
 
 	OutputManager.prototype.scrollToBottom = function() {
@@ -3569,7 +4066,7 @@ define('output-manager/OutputManager',[
 	};
 
 	OutputManager.prototype.onceQueueFlushed = function(callback) {
-		this.queueFlushedCallbacks.push(callback);
+		this.onceQueueFlushedCallbacks.push(callback);
 	};
 
 	OutputManager.prototype.pruneRenderedOutput = function(maxLength) {
@@ -3638,6 +4135,14 @@ define('command-manager/defaultResponses',[
 		commandInfo: function commandInfoDefaultResponse(req, res) {
 
 		},
+		noCommand: function noCommandDefaultResponse(req, res) {
+			res.log('No command');
+
+			var parentCommand = req.command.getCommandForRoute(req.input, true),
+				parentRoute = parentCommand.getRoute();
+			parentRoute[0] = 'help';
+			res.log('See also the help files, <a command="'+parentRoute.join(' ')+'">"'+parentRoute.join(' ')+'"</a>.');
+		},
 		noController: function noControllerDefaultResponse(req, res) {
 			res.log(req.command.getRoute().join('/') +
 				' ~ ' +
@@ -3645,10 +4150,9 @@ define('command-manager/defaultResponses',[
 
 			var url = req.command.getRoute();
 			url[0] = 'help';
-			url = '/' + url.join('/');
+			url = url.join(' ');
 
-			res.error('This command has no controller, consult <a href="'+url+'">help '+req.input+'</a> for usage info');
-
+			res.error('This command has no controller, consult <a command="'+url+'">help '+req.input+'</a> for usage info');
 		}
 	};
 });
@@ -3666,13 +4170,14 @@ define('command-manager/Command',[
 		this._controller = controller;
 	}
 
-	Command.prototype.execute = function(req, res) {
+	Command.prototype.execute = function(req, res, controller) {
 		req.command = this;
+		controller = controller || this._controller;
 
-		if(!this._controller)
+		if(!controller)
 			defaultResponses.noController(req, res);
 		else
-			this._controller(req, res);
+			controller(req, res);
 	};
 
 	Command.prototype.listCommands = function() {
@@ -3717,7 +4222,8 @@ define('command-manager/Command',[
 					break;
 
 			var parentRoute = parentCommand.getRoute().splice(1);
-			throw new Error('Invalid segment, command "'+route[i]+'" this route cannot be found in "'+parentRoute.join(' ')+'", <a href="/help/'+parentRoute.join('/')+'">see help page</a>.');
+
+			throw new Error('Invalid segment, command "'+route[i]+'"  cannot be found in "'+parentRoute.join(' ')+'", <a command="help '+parentRoute.join(' ')+'">see help page</a>.');
 		}
 
 		return parentCommand || this;
@@ -3758,7 +4264,7 @@ define('command-manager/Command',[
 	};
 
 	Command.prototype.addDescription = function(description) {
-		this.description = description;
+		this.description = Array.isArray(description) ? description : [description];
 
 		return this;
 	};
@@ -3838,14 +4344,11 @@ define('command-manager/CommandManager',[
 	defaultResponses
 ) {
 
-	function CommandManager() {
-		Command.call(this, '0x.ee', function(req, res) {
+	function CommandManager(name) {
+		Command.call(this, name || 'root', function(req, res) {
 			res.error('Patient zero')
 		});
 
-
-		this.addDescription('The 0x.ee site root.');
-		this.commands = {};
 		this.defaults = defaultResponses;
 	}
 
@@ -3853,10 +4356,25 @@ define('command-manager/CommandManager',[
 	CommandManager.prototype.constructor = Object.create(CommandManager);
 
 	CommandManager.prototype.executeCommandForRequest = function(req, res) {
-		var command = this.getCommandForRoute(req.route);
+		var command;
 
-		if(!command)
-			throw new Error('Route "'+req.route.join(' ')+'" does not exist');
+		try {
+			command = this.getCommandForRoute(req.route);
+		} catch(e) {
+			res.log('Could not execute your command "'+req.input+'" because an error occurred:');
+			res.error(e);
+			return;
+		}
+
+		// normalize (delete) short flags for their long counterparts
+		command.options.forEach(function(option) {
+			if(req.options[option.short]) {
+				if(req.options[option.long] === undefined) {
+					req.options[option.long] = req.options[option.short];
+				}
+				delete req.options[option.short];
+			}
+		});
 
 		command.execute(req, res);
 	};
@@ -3875,73 +4393,26 @@ define('command-manager/main',[
 });
 define('command-manager', ['command-manager/main'], function (main) { return main; });
 
-define('request-manager/RequestManager',[
-	// Please, let this be the only dependency on jQuery we'll ever have so we can replace it easily
-	// jQuery is a good fit because it's capability to do AJAX requests and parse HTML (or XML) response data
-	//'jquery'
-], function (
-	//jQuery
-) {
-
-	function RequestManager() {
-
-	}
-
-	function safeJqueryAjaxOptions(url, parameters, method, options) {
-		if(typeof method === 'object') {
-			options = method;
-			method = undefined;
-		}
-		if(!options)
-			options = {};
-
-		options.url = url.trim();
-		options.method = (method || options.method || 'get').toUpperCase();
-		options.cache = options.cache === undefined ? false : options.cache;
-		options.data = parameters || options.data;
-		return options;
-	}
-
-	RequestManager.prototype.httpRequest = function(url, parameters, method, options) {
-		return new Promise(function(resolve, reject) {
-			jQuery.ajax(safeJqueryAjaxOptions(url, parameters, method, options))
-				.done(resolve)
-				.fail(function(jqXHR, textStatus) {
-					reject(new Error((jqXHR.responseText || jqXHR.statusText || 'Unknown fucking jQuery AJAX error').trim()));
-				});
-		})
-	};
-
-	['post', 'get', 'put', 'delete'].forEach(function(method) {
-		RequestManager.prototype[method] = function(url, parameters, options) {
-			return this.httpRequest(url, parameters, method, options);
-		};
-	});
-
-	return RequestManager;
-});
-define('request-manager/main',[
-	'./RequestManager'
-], function (
-	RequestManager
-) {
-
-	return {
-		RequestManager: RequestManager
-	};
-});
-define('request-manager', ['request-manager/main'], function (main) { return main; });
-
 define('window-manager/DraggableElement',[], function () {
+	'use strict';
+	function findClosestAncestor(node, condition) {
+		while (node && !condition(node)) {
+			node = node.parentNode;
+		}
+		return node;
+	}
 
 	function isElementIsDescendantOf(child, parent) {
-		do {
-			if(child == parent)
-				return true;
-			child = child.parentNode;
-		} while(child != null);
-
-		return false;
+		return !!findClosestAncestor(child, function (node) {
+			return node === parent;
+		});
+		//do {
+		//	if(child == parent)
+		//		return true;
+		//	child = child.parentNode;
+		//} while(child != null);
+		//
+		//return false;
 	}
 
 	function DraggableElement (element, allowDragOutside) {
@@ -3960,12 +4431,24 @@ define('window-manager/DraggableElement',[], function () {
 			stopped: false
 		};
 
+		this.dragElement.classList.add('draggable');
+
 		this.onDrag = this.onDrag.bind(this);
 
 		this.addDragHandlers = function(mouseEvent) {
-			if(!isElementIsDescendantOf(mouseEvent.target, this.dragElement)) {
+
+			if(findClosestAncestor(mouseEvent.target, function (node) {
+				return node.classList.contains('draggable');
+			}) !== this.dragElement)
 				return;
-			}
+
+			mouseEvent.preventDefault();
+			mouseEvent.stopPropagation();
+			//mouseEvent.stopImmediatePropagation();
+			//
+			//if(!isElementIsDescendantOf(mouseEvent.target, this.dragElement)) {
+			//	return;
+			//}
 
 			if(mouseEvent.which === 3 || mouseEvent.button === 2) {
 				return;
@@ -3979,7 +4462,10 @@ define('window-manager/DraggableElement',[], function () {
 		}.bind(this);
 
 		this.removeDragHandlers = function(mouseEvent) {
+			mouseEvent.preventDefault();
 			mouseEvent.stopPropagation();
+			//mouseEvent.stopImmediatePropagation();
+
 			this.onDragStop(mouseEvent);
 
 			window.removeEventListener("mousemove", this.onDrag);
@@ -4023,6 +4509,7 @@ define('window-manager/DraggableElement',[], function () {
 	DraggableElement.prototype.onDragStop = function(dragStopEvent) {
 		dragStopEvent.preventDefault();
 		dragStopEvent.stopPropagation();
+		//dragStopEvent.stopImmediatePropagation();
 
 		this.dragging = false;
 
@@ -4049,6 +4536,7 @@ define('window-manager/DraggableElement',[], function () {
 	DraggableElement.prototype.onDragStart = function(dragStartEvent) {
 		dragStartEvent.preventDefault();
 		dragStartEvent.stopPropagation();
+		//dragStartEvent.stopImmediatePropagation();
 
 		this.dragging = true;
 		this.dragInfo = {
@@ -4074,6 +4562,7 @@ define('window-manager/DraggableElement',[], function () {
 	DraggableElement.prototype.onDrag = function(dragEvent) {
 		dragEvent.preventDefault();
 		dragEvent.stopPropagation();
+		//dragEvent.stopImmediatePropagation();
 
 		if (!this.dragging) {
 			this.onDragStart(dragEvent);
@@ -4134,7 +4623,7 @@ define('window-manager/DraggableElement',[], function () {
 	 * AMD, RequireJS
 	 */
 	if (typeof define === 'function' && define.amd) {
-		define('object-store',[], function() {
+		define('object-store',[], function () {
 			return factory();
 		});
 	}
@@ -4146,120 +4635,143 @@ define('window-manager/DraggableElement',[], function () {
 		module.exports = factory();
 	}
 
-	else if(window) {
+	else if (window) {
 		window.ObjectStore = factory();
 	}
 }(function () {
 
 	/**
-	 * A multi-schema store (in memory). Uses objectId construction
-	 * @author wvbe <wybe@x-54.com>
-	 * @constructor
+	 * @private
+	 * @param {Object} object
+	 * @param {Object} changes
+	 * @returns {Object}
 	 */
-	function ObjectStore (opts) {
+	function mergeRecursive(object, changes) {
+		Object.keys(changes).forEach(function(propertyName){
+			if ( changes[propertyName].constructor == Object ) {
+				object[propertyName] = mergeRecursive(object[propertyName], changes[propertyName]);
+			} else {
+				object[propertyName] = changes[propertyName];
+			}
+        });
+		return object;
+	}
 
+	/**
+	 * @author wvbe <wybe@x-54.com>
+	 *
+	 * @constructor
+	 * @param {Function} [options.requireInstanceOf] If set, require objects to be an instance of this class
+	 * @param {String|Number} [options.primaryKey] Name of the key to use as identifying property, defaults to "id"
+	 * @param {Boolean} [options.cacheList] If set, get list() results from cache
+	 */
+	function ObjectStore (options) {
 		var store = {},
-			options = opts || {};
+			cachedList = null;
 
+		options                   = options                   || {};
 		options.requireInstanceOf = options.requireInstanceOf || false;
-		options.primaryKey = options.primaryKey || 'id';
+		options.primaryKey        = options.primaryKey        || 'id';
+		options.cacheList         = !!options.cacheList;
 
 		/**
 		 * @method get
-		 * @param {string} objectId
+		 * @param {String|Number} objectKey
 		 * @returns {Object}
 		 */
-		function get(objectId) {
-			if(!objectId)
-				throw new Error('No id given');
+		function get(objectKey) {
+			if (!objectKey)
+				throw new Error('No objectKey given');
 
-			return store[objectId];
+			return store[objectKey];
 		}
 
 		/**
 		 * @method set
-		 * @param {Object} objectData
+		 * @param {Object} object
+		 * @param {Boolean} [overwrite]
 		 * @returns {Object}
 		 */
-		function set(objectData, overwrite) {
-			if(!objectData)
-				throw new Error('No data given');
-			if(!objectData[options.primaryKey])
-				throw new Error('No data ID given');
-			if(options.requireInstanceOf && !(objectData instanceof options.requireInstanceOf))
-				throw new Error('Data is not of the right class');
+		function set(object, overwrite) {
+			if (!object)
+				throw new Error('No object given');
+			if (!object[options.primaryKey])
+				throw new Error('No objectKey in object');
+			if (options.requireInstanceOf && !(object instanceof options.requireInstanceOf))
+				throw new Error('ObjectData is not of the right class');
 
-			if(!overwrite && store[objectData[options.primaryKey]])
-				throw new Error('Data "'+objectData[options.primaryKey]+'" already exists, overwrite not set');
+			if (!overwrite && store[object[options.primaryKey]])
+				throw new Error('Object "' + object[options.primaryKey] + '" already exists, overwrite not set');
 
-			store[objectData[options.primaryKey]] = objectData;
+			if (options.cacheList)
+				cachedList = null;
 
-			return store[objectData[options.primaryKey]];
+			store[object[options.primaryKey]] = object;
+
+			return store[object[options.primaryKey]];
 		}
 
 		/**
-		 * Sets a stored item to null, allowing garbage collection to clean it up
 		 * @method delete
-		 * @param objectId
+		 * @param {String|Number} objectKey
 		 * @returns {*}
 		 */
-		function del(objectId) {
-			if(!objectId)
-				throw new Error('No id given');
+		function del(objectKey) {
+			if (!objectKey)
+				throw new Error('No objectKey given');
 
-			delete store[objectId];
+			if (options.cacheList)
+				cachedList = null;
 
-			return store[objectId];
+			delete store[objectKey];
+
+			return store[objectKey];
 		}
 
 		/**
-		 * Returns a list of stored objects for a given schema.
 		 * @method list
-		 * @returns {Array}
+		 * @returns {Array<Object>}
 		 */
 		function list() {
-			return Object.keys(store).map(function(objectId) {
-				return store[objectId];
+			if (options.cacheList && cachedList)
+				return cachedList;
+
+			var l = Object.keys(store).map(function (objectKey) {
+				return store[objectKey];
 			});
+
+			if (options.cacheList)
+				cachedList = l;
+
+			return l;
 		}
 
 		/**
-		 * Updates an existing object using deepmerge. Returns undefined if
-		 * object does not exist yet.
 		 * @method merge
-		 * @param {Object} objectData
+		 * @param {Object} object
 		 * @returns {Object}
 		 */
-		function merge(objectData) {
-			if(!objectData)
-				throw new Error('No data given');
-			if(!objectData[options.primaryKey])
-				throw new Error('No data ID given');
+		function merge(object) {
+			if (!object)
+				throw new Error('No object given');
+			if (!object[options.primaryKey])
+				throw new Error('No objectKey given');
 
-			var objectExisting = get(objectData[options.primaryKey]);
+			var objectExisting = get(object[options.primaryKey]);
 
-			if(!objectExisting)
-				throw new Error('ID ' + objectData[options.primaryKey] + ' does not exist');
+			if (!objectExisting)
+				throw new Error('ObjectKey ' + object[options.primaryKey] + ' does not exist');
 
-			return mergeRecursive(objectExisting, objectData);
+			return mergeRecursive(objectExisting, object);
 		}
 
 		/**
-		 * Merges all attributes contained by obj2 into obj1 recursively, and returns obj1
-		 * @private
-		 * @param obj1
-		 * @param obj2
-		 * @returns {*}
+		 * @method contains
+		 * @param {Object} object
+		 * @returns {Boolean}
 		 */
-		function mergeRecursive(obj1, obj2) {
-			for (var p in obj2) {
-				if ( obj2[p].constructor==Object ) {
-					obj1[p] = mergeRecursive(obj1[p], obj2[p]);
-				} else {
-					obj1[p] = obj2[p];
-				}
-			}
-			return obj1;
+		function contains(object) {
+			return list().indexOf(object) >= 0;
 		}
 
 		this.get = get;
@@ -4267,10 +4779,81 @@ define('window-manager/DraggableElement',[], function () {
 		this.merge = merge;
 		this.delete = del;
 		this.list = list;
+		this.contains = contains;
 	}
 
 	return ObjectStore;
 }));
+(function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define('tiny-emitter',[],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.TinyEmitter = f()}})(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+function E () {
+	// Keep this empty so it's easier to inherit from
+  // (via https://github.com/lipsmack from https://github.com/scottcorgan/tiny-emitter/issues/3)
+}
+
+E.prototype = {
+	on: function (name, callback, ctx) {
+    var e = this.e || (this.e = {});
+
+    (e[name] || (e[name] = [])).push({
+      fn: callback,
+      ctx: ctx
+    });
+
+    return this;
+  },
+
+  once: function (name, callback, ctx) {
+    var self = this;
+    function listener () {
+      self.off(name, listener);
+      callback.apply(ctx, arguments);
+    };
+
+    listener._ = callback
+    return this.on(name, listener, ctx);
+  },
+
+  emit: function (name) {
+    var data = [].slice.call(arguments, 1);
+    var evtArr = ((this.e || (this.e = {}))[name] || []).slice();
+    var i = 0;
+    var len = evtArr.length;
+
+    for (i; i < len; i++) {
+      evtArr[i].fn.apply(evtArr[i].ctx, data);
+    }
+
+    return this;
+  },
+
+  off: function (name, callback) {
+    var e = this.e || (this.e = {});
+    var evts = e[name];
+    var liveEvents = [];
+
+    if (evts && callback) {
+      for (var i = 0, len = evts.length; i < len; i++) {
+        if (evts[i].fn !== callback && evts[i].fn._ !== callback)
+          liveEvents.push(evts[i]);
+      }
+    }
+
+    // Remove event from queue to prevent memory leak
+    // Suggested by https://github.com/lazd
+    // Ref: https://github.com/scottcorgan/tiny-emitter/commit/c6ebfaa9bc973b33d110a84a307742b7cf94c953#commitcomment-5024910
+
+    (liveEvents.length)
+      ? e[name] = liveEvents
+      : delete e[name];
+
+    return this;
+  }
+};
+
+module.exports = E;
+
+},{}]},{},[1])(1)
+});
 define('window-manager/Fucktard',[], function() {
 
 	function Fucktard(x,y) {
@@ -4302,41 +4885,44 @@ define('window-manager/Fucktard',[], function() {
 	return Fucktard;
 });
 define('window-manager/windows/Window',[
+	'promise',
+	'tiny-emitter',
+
 	'./../DraggableElement',
 	'./../Fucktard'
 ], function (
+	Promise,
+	TinyEmitter,
+
 	DraggableElement,
 	Fucktard
 	) {
+	'use strict';
 
 	var FUCKTARD_PADDING = 0;
 
 	//@TODO: implement addDestroyer() method for additional destroying of contained scripts etc. when the window closes
-	function Window (id, name, content) {
+	function Window (id, name) {
+		TinyEmitter.call(this);
 		if(!name || typeof name !== 'string')
 			throw new Error('Window needs to have a name');
 
 		this.id = id;
 		this.name = name;
 		this.flags = [];
+		this.anchorDestroyers = [];
+		this.destroyCallbacks = [];
+		this.isResizable = true;
 
 		if(!id)
 			this.generateId();
 
-		this.createElement();
-
-		this.anchor = new DraggableElement(this.element, true);
-		this.anchor.setListeners();
-		this.anchorDestroyers = [];
-
-		this.destroyCallbacks = [];
-
 		this.addFlag('mediumized');
-		this.populateContent(content);
 	}
-//
-//	Window.prototype = Object.create(DraggableElement.prototype);
-//	Window.prototype.constructor = Window;
+
+	Window.prototype = Object.create(TinyEmitter.prototype);
+	Window.prototype.constructor = Window;
+
 	Window.prototype.destroy = function() {
 		this.detachFromParent();
 
@@ -4352,24 +4938,23 @@ define('window-manager/windows/Window',[
 		}
 
 		this.anchor.detachFromParent();
-		//this.element.parentNode.removeChild(this.element);
+
+		if (this.isResizable)
+			this.resizeAnchor.detachFromParent();
 	};
 
 	Window.prototype.attachToParent = function(parentNode) {
+		var element = this.element;
 		var anchor = this.anchor;
+		var resizeAnchor = this.resizeAnchor;
 
 		var dragStartPosition = null,
 			ghostElement = null,
 			infoElement = null,
 			fucktards = [];
 
-		parentNode.appendChild(this.element);
-
-		anchor.setListeners();
-		
-		this.anchorDestroyers.push(anchor.addDragStartCallback(function(position) {
-			this.addFlag('moving');
-			dragStartPosition = this.element.getBoundingClientRect();
+		function createGhostAndFucktards () {
+			dragStartPosition = element.getBoundingClientRect();
 			ghostElement = document.createElement('div');
 			//ghostElement.classList.add('window');
 			ghostElement.classList.add('window--ghost');
@@ -4382,7 +4967,6 @@ define('window-manager/windows/Window',[
 			ghostElement.appendChild(infoElement);
 			parentNode.insertBefore(ghostElement, parentNode.firstChild);
 
-
 			fucktards.push(new Fucktard(FUCKTARD_PADDING, FUCKTARD_PADDING));
 			fucktards.push(new Fucktard(dragStartPosition.width, FUCKTARD_PADDING));
 			fucktards.push(new Fucktard(dragStartPosition.width, dragStartPosition.height));
@@ -4391,6 +4975,76 @@ define('window-manager/windows/Window',[
 			fucktards.forEach(function(fucktard) {
 				ghostElement.appendChild(fucktard.element);
 			});
+		}
+
+		function destroyGhost () {
+			fucktards = [];
+			dragStartPosition = null;
+
+			if(!ghostElement || !ghostElement.parentNode)
+				return;
+			ghostElement.parentNode.removeChild(ghostElement);
+		}
+
+
+		this.addDestroyCallback(destroyGhost);
+
+		parentNode.appendChild(element);
+
+		anchor.setListeners();
+		if (this.isResizable) {
+			this.anchorDestroyers.push(resizeAnchor.addDragStartCallback(function (position) {
+				this.emit('touched');
+				this.addFlag('resizing');
+				createGhostAndFucktards();
+			}.bind(this)));
+
+			this.anchorDestroyers.push(resizeAnchor.addDragCallback(function (position) {
+				if (!dragStartPosition)
+					return;
+
+				var deltaLength = Math.sqrt(position.delta.x * position.delta.x + position.delta.y * position.delta.y);
+
+				infoElement.innerHTML = [
+					'<span label="id">' + this.id + '</span>',
+					'<span label="name">' + this.name + '</span>',
+					'<span label="start">(' + position.started.x + ', ' + position.started.y + ')</span>',
+					'<span label="delta">(' + position.delta.x + ', ' + position.delta.y + ') ' + Math.round(deltaLength * 10) / 10 + 'px</span>',
+					'<span label="current">(' + (position.started.x + position.delta.x) + ', ' + (position.started.y + position.delta.y) + ')</span>'
+				].join('<br />');
+
+				ghostElement.style.width = parseFloat(dragStartPosition.width) + position.delta.x + 'px';
+				ghostElement.style.height = parseFloat(dragStartPosition.height) + position.delta.y + 'px';
+
+				var ghostBoundingBox = ghostElement.getBoundingClientRect(),
+					ghostDelta = {
+						x: ghostBoundingBox.width - dragStartPosition.width,
+						y: ghostBoundingBox.height - dragStartPosition.height
+					};
+				fucktards[2].update(ghostDelta);
+
+				//fucktards.forEach(function(fucktard) {
+				//	fucktard.update(position.delta);
+				//});
+			}.bind(this)));
+
+			this.anchorDestroyers.push(resizeAnchor.addDragStopCallback(function (position) {
+
+				element.style.width = parseFloat(dragStartPosition.width) + position.delta.x + 'px';
+				element.style.height = parseFloat(dragStartPosition.height) + position.delta.y + 'px';
+
+				this.removeFlag('resizing');
+				this.emit('resized', position);
+
+				destroyGhost();
+			}.bind(this)));
+		}
+
+		// Move handler
+		this.anchorDestroyers.push(anchor.addDragStartCallback(function(position) {
+			this.emit('touched');
+			this.addFlag('moving');
+			createGhostAndFucktards();
 		}.bind(this)));
 
 		this.anchorDestroyers.push(anchor.addDragCallback(function(position) {
@@ -4406,32 +5060,30 @@ define('window-manager/windows/Window',[
 					'<span label="current">('+(position.started.x+position.delta.x)+', '+(position.started.y+position.delta.y) + ')</span>'
 			].join('<br />');
 
-			this.element.style.top = parseFloat(dragStartPosition.top) + position.delta.y + 'px';
-			this.element.style.left = parseFloat(dragStartPosition.left) + position.delta.x + 'px';
-
+			element.style.top = parseFloat(dragStartPosition.top) + position.delta.y + 'px';
+			element.style.left = parseFloat(dragStartPosition.left) + position.delta.x + 'px';
 
 			fucktards.forEach(function(fucktard) {
 				fucktard.update(position.delta);
 			});
-
-
 		}.bind(this)));
 
+
+		// Remove ghost when anchors are released;
 		this.anchorDestroyers.push(anchor.addDragStopCallback(function(position) {
-
 			this.removeFlag('moving');
-
-			parentNode.removeChild(ghostElement);
-			fucktards = [];
-			dragStartPosition = null;
+			this.emit('moved', position);
+			destroyGhost();
 		}.bind(this)));
+
+
 	};
 
 
 
 	Window.prototype.generateId = function() {
 		var randomInt = 1000 + Math.round(Math.random() * 8999);
-		this.id = this.name.substr(0, 4).toUpperCase() + '-' + randomInt;
+		this.id = this.name.substr(0, 4).trim().toUpperCase() + '-' + randomInt;
 	};
 
 	Window.prototype.createHeaderElement = function(controls, prefix) {
@@ -4450,7 +5102,7 @@ define('window-manager/windows/Window',[
 			controlsElement.appendChild(controlElement);
 		});
 
-		var headerElement = document.createElement('div');
+		var headerElement = document.createElement('header');
 		headerElement.classList.add(prefix + '__header');
 		headerElement.appendChild(titleElement);
 		headerElement.appendChild(controlsElement);
@@ -4458,7 +5110,7 @@ define('window-manager/windows/Window',[
 		return headerElement;
 	};
 
-	Window.prototype.createElement = function() {
+	Window.prototype.createElement = function(controlElements) {
 		if(this.element)
 			throw new Error('Already made window element');
 
@@ -4466,20 +5118,27 @@ define('window-manager/windows/Window',[
 		element.classList.add('window');
 		element.setAttribute('window-name', this.name);
 
-		var closeElement = document.createElement('div');
-		closeElement.classList.add('window__close');
-		closeElement.innerHTML = '&times;';
-		closeElement.addEventListener('click', function() {
-			this.destroy();
-		}.bind(this));
+		var headerElement = this.createHeaderElement(controlElements);
 
-		var headerElement = this.createHeaderElement([closeElement]);
-
-		var contentElement = document.createElement('div');
+		var contentElement = this.createContentElement();
 		contentElement.classList.add('window__content');
 
 		element.appendChild(headerElement);
 		element.appendChild(contentElement);
+
+		// make draggable
+		if(this.isResizable) {
+			var resizeElement = document.createElement('div');
+			resizeElement.classList.add('window__resize');
+			resizeElement.setAttribute('title', 'Drag to resize the window');
+			element.appendChild(resizeElement);
+			this.resizeAnchor = new DraggableElement(resizeElement, true);
+			this.resizeAnchor.setListeners();
+		}
+
+		this.anchor = new DraggableElement(element, true);
+		this.anchor.setListeners();
+
 
 		this.flags.forEach(function(flag) {
 			element.classList.add('window--'+flag);
@@ -4488,11 +5147,14 @@ define('window-manager/windows/Window',[
 		this.element = element;
 		this.contentElement = contentElement;
 
+		this.element.style.top = 30 + Math.random() * 300 + 'px';
+		this.element.style.left = 30 + Math.random() * 400 + 'px';
+
 		return element;
 	};
 
-	Window.prototype.populateContent = function(content) {
-		this.contentElement.appendChild(content);
+	Window.prototype.createContentElement = function() {
+		throw new Error('Not implemented');
 	};
 
 	Window.prototype.hasFlag = function (flag) {
@@ -4501,12 +5163,14 @@ define('window-manager/windows/Window',[
 	Window.prototype.addFlag = function (flag) {
 		if(!this.hasFlag(flag))
 			this.flags.push(flag);
-		this.element.classList.add('window--'+flag);
+		if(this.element)
+			this.element.classList.add('window--'+flag);
 	};
 	Window.prototype.removeFlag = function (flag) {
 		if(this.hasFlag(flag))
 			this.flags.splice(this.flags.indexOf(flag), 1);
-		this.element.classList.remove('window--'+flag);
+		if(this.element)
+			this.element.classList.remove('window--'+flag);
 	};
 
 	Window.prototype.addDestroyCallback = function (callback) {
@@ -4514,21 +5178,236 @@ define('window-manager/windows/Window',[
 	};
 
 	Window.prototype.minimize = function() {
-		this.addFlag('minimized');
-		this.removeFlag('maximized');
-		this.removeFlag('mediumized');
+		return new Promise(function (res) {
+				this.addFlag('closing');
+				setTimeout(function () {
+					res(true);
+				}.bind(this), 750);
+			}.bind(this))
+			.then(function () {
+				this.removeFlag('closing');
+				this.addFlag('minimized');
+				this.removeFlag('maximized');
+				this.removeFlag('mediumized');
+			}.bind(this));
 	};
 	Window.prototype.maximize = function() {
-		this.removeFlag('minimized');
-		this.removeFlag('mediumized');
-		this.addFlag('maximized');
+		return new Promise(function (res) {
+			this.removeFlag('minimized');
+			this.removeFlag('mediumized');
+			this.addFlag('maximized');
+			res(true);
+		}.bind(this));
 	};
 	Window.prototype.mediumize = function() {
-		this.addFlag('mediumized');
-		this.removeFlag('minimized');
-		this.removeFlag('maximized');
+		return new Promise(function (res) {
+			this.addFlag('mediumized');
+			this.removeFlag('minimized');
+			this.removeFlag('maximized');
+			res(true);
+		}.bind(this));
 	};
 	return Window;
+});
+define('window-manager/windows/BasicWindow',[
+	'./Window'
+], function (
+	Window
+	) {
+	function BasicWindow (id, name, content) {
+		Window.call(this, id, name);
+
+		this.content = content;
+
+		this.addFlag('basic');
+	}
+
+	BasicWindow.prototype = Object.create(Window.prototype);
+	BasicWindow.prototype.constructor = BasicWindow;
+
+	BasicWindow.prototype.createContentElement = function() {
+		return this.content;
+	};
+
+	return BasicWindow;
+});
+define('window-manager/WindowManager',[
+	'object-store',
+
+	'./windows/Window',
+	'./windows/BasicWindow'
+], function (
+	ObjectStore,
+
+	Window,
+	BasicWindow
+) {
+
+	function WindowTaskbar(element) {
+		this.element = element;
+		this.element.classList.add('taskbar');
+	}
+	WindowTaskbar.prototype.update = function(windowManager) {
+		this.element.innerHTML = '';
+
+		windowManager.list().forEach(function(window) {
+			var controlElements = windowManager.createControlElements(window);
+
+			var headerElement = window.createHeaderElement(controlElements, 'taskbar');
+
+			window.flags.forEach(function(flag) {
+				headerElement.classList.add('taskbar--'+flag);
+			});
+
+			this.element.appendChild(headerElement);
+		}.bind(this));
+	};
+
+	function WindowManager () {
+		ObjectStore.call(this, {
+			requireInstanceOf: Window
+		});
+
+		var taskbarElement = document.getElementById('taskbar');
+		if(taskbarElement)
+			this.taskbar = new WindowTaskbar(taskbarElement);
+
+		this.newWindowCallbacks = [];
+		this.destroyWindowCallbacks = [];
+
+		this.element = this.createElement();
+	}
+
+	WindowManager.prototype = Object.create(ObjectStore.prototype);
+	WindowManager.prototype.constructor = WindowManager;
+
+	WindowManager.prototype.minimize = function(window) {
+		return window.minimize().then(function () {
+			if(this.taskbar)
+				this.taskbar.update(this);
+		}.bind(this));
+	};
+
+	WindowManager.prototype.mediumize = function(window) {
+		return window.mediumize().then(function () {
+			if(this.taskbar)
+				this.taskbar.update(this);
+		}.bind(this));
+	};
+
+	WindowManager.prototype.maximize = function(window) {
+		this.list().forEach(function(listWindow) {
+			if(window === listWindow) {
+				window.maximize();
+			} else {
+				window.minimize();
+			}
+		});
+
+		if(this.taskbar)
+			this.taskbar.update(this);
+	};
+
+	WindowManager.prototype.createElement= function() {
+		var element = document.getElementById('windows');
+		element.classList.add('windows');
+		return element;
+	};
+
+	WindowManager.prototype.createControlElements = function (window)  {
+		var controlElements = [];
+
+		controlElements.push(function (scope, methodName, titleContent) {
+			var element = document.createElement('div');
+			element.classList.add('taskbar__' + methodName);
+			element.setAttribute('title', titleContent);
+			element.innerHTML = '-';
+			element.addEventListener('click', function() {
+				scope[methodName](window);
+			});
+			return element;
+		}(this, 'minimize', 'Click to minimize this window.'));
+
+		controlElements.push(function (scope, methodName, titleContent) {
+			var element = document.createElement('div');
+			element.classList.add('taskbar__' + methodName);
+			element.setAttribute('title', titleContent);
+			element.innerHTML = '&#9633;'; // WHITE SQUARE http://www.fileformat.info/info/unicode/char/25A1/index.htm
+			element.addEventListener('click', function() {
+				scope[methodName](window);
+			});
+			return element;
+		}(this, 'mediumize', 'Click to open this window.'));
+
+		var closeElement = document.createElement('div');
+		closeElement.classList.add('window__close');
+		closeElement.setAttribute('title', 'Click to close this window.');
+		closeElement.innerHTML = '&times;';
+		closeElement.addEventListener('click', function() {
+			window.addFlag('closing');
+			setTimeout(function () {
+				window.destroy();
+			}, 750);
+		});
+		controlElements.push(closeElement);
+
+		return controlElements;
+	};
+
+	WindowManager.prototype.onNewWindow = function(callback) {
+		this.newWindowCallbacks.push(callback);
+
+		return function() {
+			this.newWindowCallbacks.splice(this.newWindowCallbacks.indexOf(callback), 1);
+		}.bind(this);
+	};
+
+	WindowManager.prototype.openNewWindow = function(name, content, id, WindowClass) {
+		if(!WindowClass)
+			WindowClass = BasicWindow;
+
+		var window = name instanceof Window
+			? name
+			: new WindowClass(id, name, content);
+
+		window = this.set(window);
+
+		window.createElement(this.createControlElements(window));
+
+		var list = this.list();
+
+		window.element.style.zIndex = list.length;
+
+		window.on('touched', function() {
+			this.list().sort(function(a, b) {
+				return a.element.style.zIndex === b.element.style.zIndex ? 0 : a.element.style.zIndex - b.element.style.zIndex;
+			}).forEach(function(win, i, windows) {
+				win.element.style.zIndex = (window === win ? windows.length : i) + 1;
+			});
+		}.bind(this));
+
+
+		window.addDestroyCallback(function() {
+			this.delete(window.id);
+		}.bind(this));
+
+		this.newWindowCallbacks.forEach(function(callback) {
+			callback(window);
+		});
+
+		window.attachToParent(this.element);
+
+		if(this.taskbar) {
+			window.addDestroyCallback(function () {
+				this.taskbar.update(this);
+			}.bind(this));
+
+			this.taskbar.update(this);
+		}
+		return window;
+	};
+
+	return WindowManager;
 });
 // Released under MIT license
 // Copyright (c) 2009-2010 Dominic Baggott
@@ -6267,28 +7146,39 @@ define('window-manager/windows/MarkdownWindow',[
 	'markdown',
 	'./Window'
 ], function (
-	markdown,
+	Markdown,
 	Window
 	) {
 
-	function MarkdownWindow (id, name, content) {
-		Window.call(this, id, name, content);
+
+	function scrollToElementFactory(element) {
+		return function (e) {
+			element.scrollIntoView();
+			e.preventDefault();
+			e.stopPropagation();
+		}
+	}
+	function MarkdownWindow (id, name, md) {
+		Window.call(this, id, name);
+
+		this.markdown = md;
+		this.documentElement = null;
+
 		this.addFlag('markdown');
 	}
 
 	MarkdownWindow.prototype = Object.create(Window.prototype);
 	MarkdownWindow.prototype.constructor = MarkdownWindow;
 
-	MarkdownWindow.prototype.populateContent = function(content) {
-		this.contentElement.classList.add('window__content--markdown');
+	MarkdownWindow.prototype.createContentElement = function() {
+		var contentElement = document.createElement('div');
 
-		var tocElement = document.createElement('div');
+		var tocElement = document.createElement('nav');
 		tocElement.classList.add('window__sidebar');
-		tocElement.classList.add('window__table-of-contents');
 
 		var documentElement = document.createElement('div');
 		documentElement.classList.add('window__document');
-		documentElement.innerHTML = markdown.toHTML(content);
+		documentElement.innerHTML = Markdown.toHTML(this.markdown);
 
 		var headerElementNames = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
 		var nodeIterator = document.createNodeIterator(
@@ -6296,7 +7186,8 @@ define('window-manager/windows/MarkdownWindow',[
 			NodeFilter.SHOW_ELEMENT,
 			function(node) {
 				return headerElementNames.indexOf(node.nodeName.toLowerCase()) >= 0;
-			}
+			},
+			true // deprecated argument, but IE
 		);
 		var node;
 
@@ -6306,199 +7197,656 @@ define('window-manager/windows/MarkdownWindow',[
 
 			var level = parseInt(node.nodeName.substr(1)),
 				id = (this.id + '-'+ i).toLowerCase(),
-				hyperlinkElement = document.createElement('a');
+				hyperlinkElement = document.createElement('a'),
+				originalElement = node;
 
-			node.setAttribute('id', id);
-			hyperlinkElement.setAttribute('href', '#'+id);
+			originalElement.setAttribute('id', id);
+			hyperlinkElement.addEventListener('click', scrollToElementFactory(originalElement));
 
-			node.setAttribute('header-id', i);
-			node.setAttribute('header-level', level);
+			originalElement.setAttribute('header-id', i);
+			originalElement.setAttribute('header-level', level);
 
 			hyperlinkElement.setAttribute('header-id', i);
 			hyperlinkElement.setAttribute('header-level', level);
-			hyperlinkElement.classList.add('window__table-of-contents__item');
+			hyperlinkElement.classList.add('window__item');
 
-			hyperlinkElement.appendChild(document.createTextNode(node.innerText));
+			hyperlinkElement.appendChild(document.createTextNode(originalElement.innerText || originalElement.innerHTML));
 			tocElement.appendChild(hyperlinkElement);
 		}
 
-		this.contentElement.appendChild(tocElement);
-		this.contentElement.appendChild(documentElement);
+		contentElement.appendChild(tocElement);
+		contentElement.appendChild(documentElement);
+
+		this.documentElement = documentElement;
+
+		return contentElement;
 	};
 
 	return MarkdownWindow;
 });
-define('window-manager/WindowManager',[
-	'object-store',
+define('panvas/main',[
+	'tiny-emitter'
+], function(TinyEmitter) {
+	'use strict';
 
-	'./windows/Window',
-	'./windows/MarkdownWindow'
-], function (
-	ObjectStore,
+	/**
+	 * - Likens to a frame, that you can put a (cutout) of a picture in. The picture in this case is the bare minimum of
+	 *   what we need to know about "content"
+	 * - Panvas therefore has it's own dimensions versus the contents
+	 * - must be able to zoom, pan and scroll
+	 *
+	 * @note: uses "z" for *zoom* and "w", "h", "x", "y" respectively for width, height, left and top.
+	 *        because its shorter.
+	 * @constructor
+	 */
 
-	Window,
-	MarkdownWindow
-) {
-
-	function WindowTaskbar() {
-		this.element = document.getElementById('taskbar');
-		this.element.classList.add('taskbar');
-	}
-	WindowTaskbar.prototype.update = function(windowManager) {
-		this.element.innerHTML = '';
-
-		windowManager.list().forEach(function(window) {
-			var closeElement = document.createElement('div');
-			closeElement.classList.add('window__close');
-			closeElement.innerHTML = '&times;';
-			closeElement.addEventListener('click', function() {
-				window.destroy();
-			});
-
-
-			var controlElements = [
-				'minimize',
-				'mediumize',
-				//'maximize'
-			].map(function(methodName) {
-				var element = document.createElement('div');
-				element.classList.add('taskbar__' + methodName);
-				element.innerHTML = '&middot;';
-				element.addEventListener('click', function() {
-					windowManager[methodName](window);
-				});
-				return element;
-			});
-
-			controlElements.push(closeElement);
-
-			var headerElement = window.createHeaderElement(controlElements, 'taskbar');
-			window.flags.forEach(function(flag) {
-				headerElement.classList.add('taskbar--'+flag);
-			});
-
-			this.element.appendChild(headerElement);
-		}.bind(this));
-	};
-
-	function WindowManager () {
-		ObjectStore.call(this, {
-			requireInstanceOf: Window
-		});
-		this.taskbar = new WindowTaskbar();
-		this.newWindowCallbacks = [];
-		this.destroyWindowCallbacks = [];
-
-		this.element = this.createElement();
-	}
-
-	WindowManager.prototype = Object.create(ObjectStore.prototype);
-	WindowManager.prototype.constructor = WindowManager;
-
-	WindowManager.prototype.minimize = function(window) {
-		window.minimize();
-		this.taskbar.update(this);
-	};
-
-	WindowManager.prototype.mediumize = function(window) {
-		window.mediumize();
-		this.taskbar.update(this);
-	};
-
-	WindowManager.prototype.maximize = function(window) {
-		this.list().forEach(function(listWindow) {
-			if(window === listWindow) {
-				window.maximize();
-			} else {
-				window.minimize();
+	var panControls = {
+		'up': {
+			label: '&#8598;',
+			tooltip: 'Pan upwards',
+			onClick: function(canvas) {
+				canvas.panFrame(50 / canvas.frame.zoom, 0, true);
+				canvas.commit();
 			}
-		});
-		this.taskbar.update(this);
+		},
+		'right': {
+			label: '&#8599;',
+			tooltip: 'Pan to the right',
+			onClick: function(canvas) {
+				canvas.panFrame(0, -50 / canvas.frame.zoom, true);
+				canvas.commit();
+			}
+		},
+		'down': {
+			label: '&#8600;',
+			tooltip: 'Pan downwards',
+			onClick: function(canvas) {
+				canvas.panFrame(-50 / canvas.frame.zoom, 0, true);
+				canvas.commit();
+			}
+		},
+		'left': {
+			label: '&#8601;',
+			tooltip: 'Pan to the left',
+			onClick: function(canvas) {
+				canvas.panFrame(0, 50 / canvas.frame.zoom, true);
+				canvas.commit();
+			}
+		}
 	};
-
-	WindowManager.prototype.createElement= function() {
-		var element = document.getElementById('windows');
-		element.classList.add('windows');
-		return element;
+	var zoomControls = {
+		'zoom-in': {
+			label: '+',
+			tooltip: 'Zoom in by 50%',
+			onClick: function(canvas) {
+				canvas.setZoom(1.5, true);
+				canvas.commit();
+			}
+		},
+		'1-1': {
+			label: '1:1',
+			tooltip: 'Zoom to actual pixels',
+			onClick: function(canvas) {
+				canvas.setZoom(1, false);
+				//canvas.panFrame(0,0);
+				canvas.commit();
+			}
+		},
+		'reset': {
+			label: 'R',
+			tooltip: 'Reset zoom to fit window',
+			onClick: function(canvas) {
+				canvas.resetPositioning();
+			}
+		},
+		'zoom-out': {
+			label: '-',
+			tooltip: 'Zoom out by 50%',
+			onClick: function(canvas) {
+				canvas.setZoom(1/1.5, true);
+				canvas.commit();
+			}
+		}
 	};
+	function Panvas (frame, pictureUrl) {
+		TinyEmitter.call(this);
+
+		this.container = frame;
+		this.container.classList.add('panvas');
+		this.container.classList.add('panvas__frame');
+
+		var controlsElement = document.createElement('div');
+		controlsElement.classList.add('panvas__controls');
+		this.container.appendChild(controlsElement);
 
 
-	WindowManager.prototype.onNewWindow = function(callback) {
-		this.newWindowCallbacks.push(callback);
+		var zoomControlsElement = document.createElement('div');
+		zoomControlsElement.classList.add('panvas__controls__zoom');
+		controlsElement.appendChild(zoomControlsElement);
+		Object.keys(zoomControls).forEach(function (direction) {
+			var el = document.createElement('div');
+			el.classList.add('panvas__controls__zoom--' + direction);
+			el.setAttribute('title', zoomControls[direction].tooltip);
+			el.innerHTML = zoomControls[direction].label;
+			el.addEventListener('click', zoomControls[direction].onClick.bind(undefined, this));
+			zoomControlsElement.appendChild(el);
+		}.bind(this));
 
-		return function() {
-			this.newWindowCallbacks.splice(this.newWindowCallbacks.indexOf(callback), 1);
+		var panControlsElement = document.createElement('div');
+		panControlsElement.classList.add('panvas__controls__pan');
+		controlsElement.appendChild(panControlsElement);
+		Object.keys(panControls).forEach(function (direction) {
+			var el = document.createElement('div');
+			el.classList.add('panvas__controls__pan--' + direction);
+			el.setAttribute('title', panControls[direction].tooltip);
+			el.innerHTML = panControls[direction].label;
+			el.addEventListener('click', panControls[direction].onClick.bind(undefined, this));
+			panControlsElement.appendChild(el);
+		}.bind(this));
+
+		if(pictureUrl)
+			this.load(pictureUrl);
+	}
+
+	Panvas.prototype = Object.create(TinyEmitter.prototype);
+	Panvas.prototype.constructor = Panvas;
+
+	Panvas.prototype.load = function(pictureUrl) {
+		var content = new Image();
+		content.src = pictureUrl;
+
+		this.container.classList.add('panvas--loading');
+
+		content.onload = function() {
+
+
+			if(this.content)
+				this.container.removeChild(this.content);
+
+			this.content = content;
+			this.content.classList.add('panvas__picture');
+			this.content.setAttribute('draggable', 'false');
+			this.container.appendChild(this.content);
+			this.container.classList.remove('panvas--loading');
+
+			this.picture = this.getDimensions(this.content);
+			this.frame = this.getDimensions(this.container);
+
+			this.commitFrame();
+			this.resetPositioning();
+
+			this.emit('loaded');
+		}.bind(this);
+
+		content.onerror = function (){
+			this.container.classList.remove('panvas--loading');
+			this.container.classList.add('panvas--error');
+
+			this.emit('error');
 		}.bind(this);
 	};
 
-	WindowManager.prototype.openNewWindow = function(name, content, id, WindowClass) {
-		if(!WindowClass)
-			WindowClass = Window;
-
-		var window = name instanceof Window
-			? name
-			: new WindowClass(id, name, content);
-
-		window = this.set(window);
-
-		var list = this.list();
-
-		window.element.style.zIndex = list.length;
-
-		window.anchor.addDragStartCallback(function() {
-			this.list().sort(function(a, b) {
-				return a.element.style.zIndex === b.element.style.zIndex ? 0 : a.element.style.zIndex - b.element.style.zIndex;
-			}).forEach(function(win, i, windows) {
-				win.element.style.zIndex = (window === win ? windows.length : i) + 1;
-			});
-
-		}.bind(this));
-
-		window.attachToParent(this.element);
-
-		window.addDestroyCallback(function() {
-			this.delete(window.id);
-		}.bind(this));
-
-		window.addDestroyCallback(function() {
-			this.taskbar.update(this);
-		}.bind(this));
-
-		this.newWindowCallbacks.forEach(function(callback) {
-			callback(window);
-		});
-
-		this.taskbar.update(this);
-
-		return window;
+	Panvas.prototype.resizeFrame = function (width, height) {
+		this.frame.w = width;
+		this.frame.h = height;
+		this.frame.r = width / height;
 	};
 
-	WindowManager.prototype.openNewMarkdownWindow = function(name, content, id) {
-		return this.openNewWindow(name, content, id, MarkdownWindow);
+	Panvas.prototype.panFrame = function (down, right, additive) {
+		this.frame.x = (additive ? this.frame.x : 0) + right;
+		this.frame.y = (additive ? this.frame.y : 0) + down;
 	};
 
-	return WindowManager;
+	Panvas.prototype.commit = function() {
+		var picturePixel = {
+				w: (this.frame.zoom * this.picture.w),
+				h: (this.frame.zoom * this.picture.h)
+			},
+			normalizedOffset = this.getNormalizedOffset(
+				picturePixel,
+				this.frame
+			);
+
+		this.content.style.width  = picturePixel.w + 'px';
+		this.content.style.height = picturePixel.h + 'px';
+		this.content.style.top    = normalizedOffset.y + (this.frame.zoom * this.frame.y) + 'px';
+		this.content.style.left   = normalizedOffset.x + (this.frame.zoom * this.frame.x) + 'px';
+	};
+
+	Panvas.prototype.commitFrame = function() {
+		this.container.style.width = (this.frame.w) + 'px';
+		this.container.style.height = (this.frame.h) + 'px';
+	};
+
+	Panvas.prototype.setZoom = function(ratio, multiply) {
+		this.frame.zoom = multiply ? ratio * this.frame.zoom : ratio;
+	};
+
+	Panvas.prototype.setZoomForContain = function(picture) {
+		picture = picture || this.picture;
+
+		this.setZoom(this.contentIsWider()
+			? this.frame.w / picture.w
+			: this.frame.h / picture.h)
+	};
+
+	Panvas.prototype.contentIsWider = function(frame, picture) {
+		frame = frame || this.frame;
+		picture = picture || this.picture;
+
+		return picture.r > frame.r;
+	};
+
+
+	Panvas.prototype.getDimensions = function(element) {
+		element = element instanceof Image
+			? element
+			: element.getBoundingClientRect();
+		return {
+			w: element.width,
+			h: element.height,
+			r: element.width / element.height
+		};
+	};
+
+	/**
+	 * Get the offset in actual pixels that it would take to place picture center in frame center
+	 */
+	Panvas.prototype.getNormalizedOffset = function(picture, frame) {
+		return {
+			x: (frame.w - picture.w) / 2,
+			y: (frame.h - picture.h) / 2
+		};
+	};
+	Panvas.prototype.resetPositioning = function() {
+		this.panFrame(0, 0);
+		this.setZoomForContain();
+
+		this.commit();
+	};
+	Panvas.prototype.zoom = function () {
+		this.setZoom.apply(this, arguments);
+		this.commit();
+	};
+	Panvas.prototype.pan = function () {
+		this.panFrame.apply(this, arguments);
+		this.commit();
+	};
+
+	return Panvas;
+
+
+
+});
+define('panvas', ['panvas/main'], function (main) { return main; });
+
+define('window-manager/windows/ImageWindow',[
+	'panvas',
+	'./Window'
+], function (
+	Panvas,
+	Window
+	) {
+
+
+	function PortfolioImage (url) {
+		this.url = url;
+		this.thumbnail = this.createThumbnailElement();
+	}
+	PortfolioImage.prototype.getFullUrl = function() {
+		return require.toUrl('portfolio/' + this.url)
+	};
+	PortfolioImage.prototype.getThumbnailUrl = function() {
+		return require.toUrl('portfolio/generated/thumb/' + this.url)
+	};
+	PortfolioImage.prototype.createThumbnailElement = function() {
+		var imageLinkElement = document.createElement('a'),
+			imageElement = new Image();
+
+		// edit thumbnail URL here
+		imageElement.src = this.getThumbnailUrl();
+
+		imageLinkElement.appendChild(imageElement);
+
+		return imageLinkElement;
+	};
+
+	/**
+	 * @TODO: Thumbnail URLs
+	 * @param id
+	 * @param name
+	 * @param allImages
+	 * @param currentImage
+	 * @constructor
+	 */
+
+	function ImageWindow (id, name, allImages, currentImage) {
+		Window.call(this, id, name);
+
+		this.allImages = (Array.isArray(allImages) ? allImages : [allImages]).map(function(img) {
+			return new PortfolioImage(img)
+		}.bind(this));
+		this.currentImage = currentImage || 0;
+
+		this.addFlag('image');
+	}
+
+	ImageWindow.prototype = Object.create(Window.prototype);
+	ImageWindow.prototype.constructor = ImageWindow;
+
+	ImageWindow.prototype.createThumbnailsElement = function() {
+		var thumbnailsElement = document.createElement('div');
+
+		this.allImages.forEach(function(image) {
+			image.thumbnail.addEventListener('click', function(e) {
+				this.openImage(image);
+				e.preventDefault();
+				e.stopPropagation();
+			}.bind(this));
+
+			image.thumbnail.classList.add('window__thumbnail');
+			thumbnailsElement.appendChild(image.thumbnail);
+
+		}.bind(this));
+
+		return thumbnailsElement;
+	};
+
+	ImageWindow.prototype.getCurrentImage = function() {
+		return this.allImages[this.currentImage];
+	};
+
+	ImageWindow.prototype.openImage = function(image) {
+		if(image)
+			this.currentImage = image instanceof PortfolioImage ? this.allImages.indexOf(image) : image;
+
+		this.canvas.load(this.getCurrentImage().getFullUrl());
+	};
+
+	ImageWindow.prototype.createContentElement = function() {
+
+		var contentElement = document.createElement('div');
+
+		if(this.allImages.length > 1) {
+			var thumbnailsElement = this.createThumbnailsElement();
+			thumbnailsElement.classList.add('window__sidebar');
+			thumbnailsElement.classList.add('window__thumbnails');
+			contentElement.appendChild(thumbnailsElement);
+		}
+
+		var documentElement = document.createElement('article');
+		documentElement.classList.add('window__document');
+
+		var canvasElement = document.createElement('div');
+		canvasElement.classList.add('window__canvas');
+
+		this.documentElement = documentElement;
+
+		var canvas = new Panvas(canvasElement);
+		this.canvas = canvas;
+
+		documentElement.appendChild(canvasElement);
+
+		this.on('resized', function () {
+			var bb = this.documentElement.getBoundingClientRect();
+			canvas.resizeFrame(bb.width - 7, bb.height - 7);
+			canvas.commitFrame();
+			canvas.commit();
+		}.bind(this));
+		this.openImage();
+
+		contentElement.appendChild(documentElement);
+
+		return contentElement;
+	};
+
+	return ImageWindow;
 });
 define('window-manager/main',[
 	'./DraggableElement',
 	'./WindowManager',
-	'./windows/Window',
-	'./windows/MarkdownWindow'
+
+	'./windows/BasicWindow',
+	'./windows/MarkdownWindow',
+	'./windows/ImageWindow'
 ], function (
 	DraggableElement,
 	WindowManager,
-	Window,
-	MarkdownWindow
+	BasicWindow,
+	MarkdownWindow,
+	ImageWindow
 ) {
 	return {
 		DraggableElement: DraggableElement,
 		WindowManager: WindowManager,
 
-		Window: Window,
-		MarkdownWindow: MarkdownWindow
+		BasicWindow: BasicWindow,
+		MarkdownWindow: MarkdownWindow,
+		ImageWindow: ImageWindow
 	};
 });
 define('window-manager', ['window-manager/main'], function (main) { return main; });
+
+define('core/commands/debug',[], function() {
+
+	return function(app) {
+
+		var debugCommand = app.command.addCommand('debug', function(req, res) {
+			if(app.hasFlag('debug-mode')) {
+				res.log('Debug mode is currently: engaged');
+				req.command.getCommandByName('off').execute(req, res);
+			} else {
+				res.log('Debug mode is currently: disengaged');
+				req.command.getCommandByName('on').execute(req, res);
+			}
+		})
+			.addDescription('Toggle debug mode');
+
+		debugCommand.addCommand('on', function(req, res) {
+				app.addFlag('debug-mode');
+				app.output.scrollToBottom(); // avoid waiting 50ms for output-and-scroll
+
+				res.log('Engaging debug mode...');
+				res.log('Debug and error objects are now expanded. Type <a command="debug off">debug off</a> to disable it again.');
+			})
+			.addDescription('Engage debug mode');
+
+		debugCommand.addCommand('off', function(req, res) {
+				app.removeFlag('debug-mode');
+				res.log('Disengaging debug mode...');
+				res.log('Debug and error objects are now collapsed. Type <a command="debug on">debug on</a> to enable it again.');
+			})
+			.addDescription('Disengage debug mode');
+
+		debugCommand.addCommand('prune', function(req, res) {
+				req.app.output.pruneRenderedOutput(req.options.length || 5);
+			})
+			.addDescription('Trim output log to given length, defaults to 5')
+			.addOption('length', 'l', 'Number of log items to retain', false, 'n');
+
+	};
+
+});
+define('core/commands/help',[], function () {
+	var SEP = '\t',
+		SEPP = SEP + SEP;
+
+	return function(app) {
+		app.command.addCommand('help', function(req, res) {
+			var commandManager = req.app.command,
+				root = commandManager.getCommandForRoute(req.route.slice(1), true);
+			res.header('Help');
+			res.log('HELP FILE FOR ' + root.getRoute().join('/').toUpperCase()+'');
+
+			if(root.description)
+				res.log(root.description);
+
+			if(root.listCommands().length) {
+				res.log();
+				res.log('Child commands');
+				root.listCommands().sort(function(a, b) {
+					return a.name < b.name ? -1 : 1;
+				}).forEach(function (command) {
+					res.log(SEP + '<a command="help '+command.getRoute().slice(1).join(' ')+'">?</a>' + ' ' + '<a command="'+command.getRoute().slice(1).join(' ')+'">'+command.name+'</a>' + SEPP + command.description);
+				});
+			}
+
+			if(root.listOptions().length) {
+				res.log();
+				res.log('Options');
+				root.listOptions().sort(function(a, b) {
+					return a.long < b.long ? -1 : 1;
+				}).forEach(function (option) {
+					res.log(SEP + [
+						option.short ? '-' + option.short : null,
+							'--' + option.long + (option.type ? ' &#60;' + option.type + '&#62;' : ''),
+						option.description].join(SEP));
+				});
+			}
+		})
+			.addDescription('Prints the help files, sort of')
+			.isGreedy();
+
+	};
+
+
+
+});
+define('core/Application',[
+	'base64',
+
+	'input-manager',
+	'output-manager',
+	'command-manager',
+	'window-manager',
+
+	'./commands/debug',
+	'./commands/help'
+
+], function (
+	base64,
+	$input,
+	$output,
+	$command,
+	$window,
+
+	debugCommandFactory,
+	helpCommandFactory
+
+) {
+
+
+	function Application(element) {
+		this.flags = [];
+		this.element = element || document.body;
+		this.input = new $input.InputManager();
+		this.output = new $output.OutputManager();
+		this.command = new $command.CommandManager(document.title);
+		this.window = new $window.WindowManager();
+
+		this.input.captureMagicHref(this.element);
+
+		// update suggestions when user types
+		this.input.onChange(function(value) {
+			var suggestedCommands = this.command.getSuggestedCommandsForInput(value);
+			this.input.suggestions.populateFromCommands(suggestedCommands.sort(function(a, b) {
+				return a.name < b.name ? -1 : 1;
+			}));
+		}.bind(this));
+
+		setTimeout(function() {
+			// hack, at this time there have been no registered commands
+			this.input.suggestions.populateFromCommands(this.command.listCommands().sort(function(a, b) {
+				return a.name < b.name ? -1 : 1;
+			}));
+		}.bind(this));
+
+		// write to log when user submits
+		this.input.onSubmit(function(value) {
+			this.output.input(value);
+		}.bind(this));
+
+		// update page title
+		var originalDocumentTitle = document.title,
+			pageTitleElement = document.getElementById('pagetitle');
+
+		if(pageTitleElement)
+			this.input.onSubmit(function(value) {
+				document.title = originalDocumentTitle + ' - '+value.input;
+				pageTitleElement.innerHTML = document.title;
+			}.bind(this));
+
+		// find and execute controller when user submits
+		this.input.onSubmit(function(value) {
+			// Construct req/res, start controllers etc.
+			var req = value,
+				res = this.output;
+			req.app = this;
+
+			try {
+				this.command.executeCommandForRequest(req, res);
+			} catch (error) {
+				res.error(error);
+			}
+		}.bind(this));
+
+		// keep the latest input in URL bar, and vice versa
+		this.input.onSubmit(function(value) {
+			window.history.pushState({input: value.input}, value.input, '#!/' + (value.input.indexOf(' ') >= 0 ? '~' + base64.encode(value.input) : value.input));
+		});
+
+		this.input.onMagicHref(function(value) {
+			this.input.submit(value);
+		}.bind(this));
+
+		// load core-specific commands
+		[
+			debugCommandFactory,
+			helpCommandFactory
+		].forEach(function(commandFactory) {
+			commandFactory(this);
+		}.bind(this));
+
+		this.input.focusField(true);
+
+	}
+
+	Application.prototype.addFlag = function(flag) {
+		if(!this.flags)
+			this.flags = [];
+
+		this.flags.push(flag);
+
+		if(this.element)
+			this.element.classList.add(flag);
+	};
+
+	Application.prototype.hasFlag = function(flag) {
+		return this.flags.indexOf(flag) >= 0;
+	};
+
+	Application.prototype.removeFlag = function(flag) {
+		if(this.flags)
+			this.flags.splice(this.flags.indexOf(flag), 1);
+
+		if(this.element)
+			this.element.classList.remove(flag);
+	};
+
+
+
+	return Application;
+});
+define('core/main',[
+	'./Application'
+], function (
+	Application
+) {
+	return {
+		Application: Application
+	}
+});
+define('core', ['core/main'], function (main) { return main; });
 
 define('sensor-manager/sensors/Sensor',[], function() {
 
@@ -6517,7 +7865,7 @@ define('sensor-manager/sensors/Sensor',[], function() {
 	};
 	Sensor.prototype.isActive = function() {
 		throw new Error('Not implemented');
-	}
+	};
 	Sensor.prototype.reset = function () {
 		throw new Error('Not implemented');
 	};
@@ -6535,6 +7883,15 @@ define('sensor-manager/sensors/Sensor',[], function() {
 	Sensor.prototype.destroy = function () {
 		this.stop();
 		this.getElement().parentNode.removeChild(this.getElement());
+	};
+
+	Sensor.prototype.getSummary = function(obj) {
+		if(typeof obj !== 'object')
+			obj = {};
+
+		obj.id = this.id;
+
+		return obj;
 	};
 
 	return Sensor;
@@ -6685,13 +8042,17 @@ define('canvases/Banshee',[
 	'./Canvas'
 ], function(Canvas) {
 
+
 	var BANSHEE_DEFAULTS= {
-		color: '#ffffff',
+		color: '#414141',
 		background: false,
-		datapointWidth: 3,
-		datapointSpacing: 1,
-		datapointsPerSecond: false,
-		excitementDecay: 0.8
+		datapointWidth: 1,
+		datapointSpacing: 3,
+		datapointsPerSecond: 20,
+		excitementDecay: 0.5,
+
+		inaccuracy: 0.1, // 0.1
+		deviation: 1 // 1
 	};
 
 	function Banshee(width, height, options) {
@@ -6791,9 +8152,9 @@ define('canvases/Banshee',[
 
 		var datapoint = {
 			//value: (Math.random() * 2 -1) * (this.excitement + Math.random() * 0.01),
-			value: this.excitement + (Math.random()-0.5) * 0.1,
+			value: this.excitement + (Math.random()-0.5) * this.options.inaccuracy,
 			//value: Math.abs(Math.sin(this.frame * 0.1)),
-			skew: Math.random()*2 - 1
+			skew: (Math.random()*2 - 1) * this.options.deviation
 		};
 
 		this.datapoints.unshift(datapoint);
@@ -6835,13 +8196,7 @@ define('sensor-manager/sensors/BansheeSensor',[
 		if(!options)
 			options = {};
 
-		this.banshee = new canvases.Banshee(250, 25, {
-			color:               options.color || '#414141',
-			datapointsPerSecond: options.datapointsPerSecond || 20,
-			datapointWidth:      options.datapointWidth || 1,
-			datapointSpacing:    options.datapointSpacing || 3,
-			excitementDecay:     options.excitementDecay || 0.5
-		});
+		this.banshee = new canvases.Banshee(250, 25, options);
 
 		this.element = document.createElement('div');
 		this.element.classList.add('sensor');
@@ -6853,6 +8208,7 @@ define('sensor-manager/sensors/BansheeSensor',[
 		var canvasWrapperElement = document.createElement('div');
 		canvasWrapperElement.classList.add('sensor__canvas');
 		canvasWrapperElement.appendChild(this.banshee.element);
+		this.canvasWrapper = canvasWrapperElement;
 
 		this.element.appendChild(labelElement);
 		this.element.appendChild(canvasWrapperElement);
@@ -6878,21 +8234,48 @@ define('sensor-manager/sensors/BansheeSensor',[
 
 		var bb = this.banshee.element.parentNode.getBoundingClientRect();
 
-		this.element.classList.add('sensor--started');
-		this.element.classList.remove('sensor--stopped');
+		this.setStatus(true);
 
 		this.banshee.resize(bb.width);
 	};
-	BansheeSensor.prototype.stop = function() {
-		this.element.classList.remove('sensor--started');
-		this.element.classList.add('sensor--stopped');
-
+	BansheeSensor.prototype.stop = function(status) {
+		this.setStatus(status || 'Stopped');
 		this.banshee.stop();
 	};
 
 	BansheeSensor.prototype.getElement = function() {
 		return this.element;
 	};
+
+	BansheeSensor.prototype.delayedStart = function (status, time) {
+		this.setStatus(status || 'Starting');
+		setTimeout(function () {
+			this.start();
+		}.bind(this), time || (1000 + Math.round(Math.random() * 1000)));
+	};
+
+	BansheeSensor.prototype.setStatus = function (status) {
+		if(status === true) {
+			this.element.classList.add('sensor--started');
+			this.element.classList.remove('sensor--stopped');
+			this.canvasWrapper.setAttribute('status-text', 'Running');
+			return;
+		}
+
+		this.element.classList.remove('sensor--started');
+		this.element.classList.add('sensor--stopped');
+		this.canvasWrapper.setAttribute('status-text', status || '');
+	};
+
+	BansheeSensor.prototype.getSummary = function() {
+		var summary = Sensor.prototype.getSummary.apply(this, arguments);
+		//summary.bansheeOptions = this.banshee.options;
+		summary.bansheeOInfo = this.banshee.info;
+		summary.bansheeRuntime = {
+			datapoints: this.banshee.datapoints.length
+		};
+		return summary;
+	}
 
 	return BansheeSensor;
 
@@ -6907,29 +8290,41 @@ define('sensor-manager/SensorManager',[
 	Sensor,
 	BansheeSensor
 ) {
-	function SensorManager() {
+	function SensorManager(element) {
+		if(!element) {
+			this.disabled = true;
+		}
+
 		ObjectStore.call(this, {
 			requireInstanceOf: Sensor
 		});
 
-		this.element = document.getElementById('sensors');
+		this.element = element;
 	}
 
 	SensorManager.prototype = Object.create(ObjectStore.prototype);
 	SensorManager.prototype.constructor = SensorManager;
-	
+
 	SensorManager.prototype.addSensor = function (id, options, doNotStart) {
+		if(this.disabled)
+			return;
+
 		var sensor = this.set(id instanceof Sensor ? id : new BansheeSensor(id, options));
 		this.element.appendChild(sensor.getElement());
-		if(!doNotStart)
-			sensor.start();
-		else
-			sensor.stop();
+
+		if(!doNotStart) {
+			sensor.delayedStart('Starting');
+		} else {
+			sensor.stop('Idle');
+		}
 
 		return sensor;
 	};
 
 	SensorManager.prototype.removeSensor = function(id) {
+		if(this.disabled)
+			return;
+
 		var sensor = this.get(id);
 
 		sensor.destroy();
@@ -6938,6 +8333,9 @@ define('sensor-manager/SensorManager',[
 	};
 
 	SensorManager.prototype.registerValue = function(id, y, x) {
+		if(this.disabled)
+			return;
+
 		var sensor = this.get(id);
 
 		sensor.registerValue(y, x);
@@ -7082,8 +8480,20 @@ define('sensor-manager/sensors/GyroBansheeSensor',[
 	GyroBansheeSensor.prototype = Object.create(BansheeSensor.prototype);
 	GyroBansheeSensor.prototype.constructor = GyroBansheeSensor;
 
-	GyroBansheeSensor.prototype.start = function() {
+	GyroBansheeSensor.prototype.start = function(req, res) {
 		BansheeSensor.prototype.start.apply(this, arguments);
+
+		if(res) {
+			res.log('Initializing gyro tracker, detecting features...');
+
+			var features = gyro.getFeatures();
+			res.log('... detected ' + features.length + ' gyro features: ' + features.join(', '));
+
+			if (!features.length)
+				return res.log('Initializing gyro aborted, no detected features');
+
+			res.log('Gyro engaged, polling rate ' + (1000 / this.getFrequency()) + '/second');
+		}
 
 		gyro.startTracking(function(gyroData) {
 			this.registerValue(0.3);
@@ -7115,7 +8525,9 @@ define('sensor-manager/main',[
 
 	Sensor,
 	BansheeSensor,
-	GyroBansheeSensor
+	GyroBansheeSensor,
+
+	commandsFactory
 ) {
 
 	return {
@@ -7128,69 +8540,124 @@ define('sensor-manager/main',[
 });
 define('sensor-manager', ['sensor-manager/main'], function (main) { return main; });
 
-define('text!portfolio/info.json',[],function () { return '{\n\t"objects": [\n\t\t{\n\t\t\t"name": "The Hunter",\n\t\t\t"type": "image",\n\t\t\t"category": "Illustration",\n\t\t\t"images": [\n\t\t\t\t"illustration/hunter-becomes-the-hunted-kleiner.png",\n\t\t\t\t"illustration/hunter-becomes-the-hunted-resized-tuned.jpg"\n\t\t\t]\n\t\t},\n\t\t{\n\t\t\t"name": "Owl Business",\n\t\t\t"type": "image",\n\t\t\t"category": "Illustration",\n\t\t\t"images": [\n\t\t\t\t"illustration/IMAG0187.gif",\n\t\t\t\t"illustration/IMAG0235.jpg"\n\t\t\t]\n\t\t},\n\t\t{\n\t\t\t"name": "Misc #1 (the Sleepers)",\n\t\t\t"type": "image",\n\t\t\t"category": "Illustration",\n\t\t\t"images": [\n\t\t\t\t"illustration/portfolio0013_verkleind.jpg"\n\t\t\t]\n\t\t},\n\t\t{\n\t\t\t"name": "Misc #2 (Rawk)",\n\t\t\t"type": "image",\n\t\t\t"category": "Illustration",\n\t\t\t"images": [\n\t\t\t\t"illustration/rawk-handzaam.jpg"\n\t\t\t]\n\t\t},\n\t\t{\n\t\t\t"name": "Misc #3",\n\t\t\t"type": "image",\n\t\t\t"category": "Illustration",\n\t\t\t"images": [\n\t\t\t\t"illustration/Scan.jpg"\n\t\t\t]\n\t\t},\n\t\t{\n\t\t\t"name": "Interfais",\n\t\t\t"type": "github",\n\t\t\t"category": "Code",\n\t\t\t"repository": "git@github.com:wvbe/interfais.git",\n\t\t\t"readme": "interfais/README.md"\n\t\t},\n\t\t{\n\t\t\t"name": "ng-dualshock",\n\t\t\t"type": "github",\n\t\t\t"category": "Code",\n\t\t\t"repository": "git@github.com:wvbe/ng-dualshock.git"\n\t\t},\n\t\t{\n\t\t\t"name": "node-eyetribe",\n\t\t\t"type": "github",\n\t\t\t"category": "Code",\n\t\t\t"repository": "git@github.com:wvbe/node-eyetribe.git"\n\t\t},\n\t\t{\n\t\t\t"name": "ardronestreamdualshock",\n\t\t\t"type": "github",\n\t\t\t"category": "Code",\n\t\t\t"repository": "git@github.com:wvbe/ardronestreamdualshock.git"\n\t\t},\n\t\t{\n\t\t\t"name": "object-store",\n\t\t\t"type": "github",\n\t\t\t"category": "Code",\n\t\t\t"repository": "git@github.com:wvbe/object-store.git"\n\t\t},\n\t\t{\n\t\t\t"name": "bubble",\n\t\t\t"description": "Bubble is a HTML5 canvas-driven experiment with a group of nodes that interact based on their proximity to others.",\n\t\t\t"type": "script",\n\t\t\t"category": "Code",\n\t\t\t"script": "bubble",\n\t\t\t"options": {\n\t\t\t\t"width": 640,\n\t\t\t\t"height": 480,\n\t\t\t\t"population": 100,\n\t\t\t\t"node_size": 2,\n\t\t\t\t"radius_near": 25,\n\t\t\t\t"radius_far": 120,\n\t\t\t\t"radius_void": 30000,\n\t\t\t\t"attraction_multiplier": 0.0003,\n\t\t\t\t"attraction_power": 0.3,\n\t\t\t\t"repulsion_multiplier": 0.1,\n\t\t\t\t"repulsion_power": 0.3,\n\t\t\t\t"slowdown_multiplier": 0.98,\n\t\t\t\t"gravity": 0.0,\n\t\t\t\t"node_color": "rgba(100,100,100, 0)",\n\t\t\t\t"line_color": "51,51,51"\n\t\t\t}\n\t\t}\n\t]\n}\n';});
+define('sensor-manager/module',[
+	'./main'
+], function ($sensor) {
 
-define('portfolio/items/Item',[], function() {
+	return function(app) {
 
-	function quickHash(str) {
-		var hash = 0;
-		if (str.length == 0) return hash;
-		for (i = 0; i < str.length; i++) {
-			char = str.charCodeAt(i);
-			hash = ((hash<<5)-hash)+char;
-			hash = hash & hash; // Convert to 32bit integer
-		}
-		return hash;
-	}
 
-	function Item (info) {
-		this.id = null;
-		Object.keys(info).forEach(function(key) {
-			this[key] = info[key];
+		app.sensor = new $sensor.SensorManager(document.getElementById('sensors'));
+		app.sensor.addSensor('keyboard');
+		app.sensor.addSensor('operations');
+		app.sensor.addSensor('dom lvl', {
+			excitementDecay: 1,
+			deviation: 2,
+			inaccuracy: 0.5
+		});
+		app.sensor.addSensor('i/o');
+
+
+
+		if(!app.sensor.disabled)
+			setInterval(function () {
+				var elements = document.querySelectorAll(':hover'),
+					sensor = app.sensor.get('dom lvl');
+				sensor.banshee.excitement = elements ? (elements.length - 3) / 6 : 0;
+			}, 250);
+
+		app.sensor.addSensor(new $sensor.GyroBansheeSensor('gyro', {
+			datapointsPerSecond: 40,
+			excitementDecay: 0.7
+		}), null, true);
+
+		// register value congruent to actual HTML length for a logged message
+		app.output.onRender(function(output, target) {
+			var wrap = document.createElement('div');
+			wrap.appendChild(target.cloneNode(true));
+			app.sensor.registerValue('i/o', wrap.innerHTML.length/750);
+		});
+
+		// excite the banshee when user types
+		app.input.onChange(function() {
+			app.sensor.registerValue('keyboard', 0.3);
+		});
+
+		// excite the banshee when user submits
+		app.input.onSubmit(function() {
+			app.sensor.registerValue('operations', 1);
 		}.bind(this));
 
-		if(!this.id)
-			this.generateId();
-	}
 
-	Item.prototype.generateId = function() {
-		// Make up an ID
-		this.id = (this.name.replace(/\W+/g, '').substr(0,4) + '-' + quickHash(this.name).toString(36).replace(/\W+/g, '').substr(0,3))
-			.toLowerCase();
-	};
-
-	/**
-	 * @returns Promise
-	 */
-	Item.prototype.get = function () {
-		throw new Error('Not implemented.');
-	};
-
-	// Is in fact a controller
-	Item.prototype.create = function (req, res) {
-
-		res.log(this.name.toUpperCase() + ' (type: '+this.type+')');
-		res.log('------------------------------------');
-
-		Object.keys(this).forEach(function(key) {
-			var value = this[key];
-			switch (typeof value) {
-				case 'string':
-				case 'number':
-					res.keyValue(key, value);
-				default:
-					return;
+		function getSensorsForQuery(req, res) {
+			var selectedSensors = [];
+			if(req.options.all) {
+				selectedSensors = app.sensor.list();
+			} else if(req.options.sensor) {
+				selectedSensors.push(app.sensor.get(req.options.sensor));
 			}
-		}.bind(this));
 
+			if(!selectedSensors.length) {
+				res.log('No sensors selected! See also <a command="sensors list">sensors list</a> and <a command="help sensors toggle">help sensors toggle</a>');
+				return [];
+			}
+1
+			return selectedSensors;
+		}
+
+		function describeArgumentsForQuery(command) {
+			command
+				.addOption('all', 'a', 'Select all sensors')
+				.addOption('sensor', 's', 'Select sensor by ID');
+		}
+		var sensorCommand = app.command.addCommand('sensors')
+			.addDescription('Sensory controls');
+
+		describeArgumentsForQuery(sensorCommand.addCommand('on', function(req, res) {
+			getSensorsForQuery(req, res).forEach(function(sensor) {
+				if(sensor.element.classList.contains('sensor--started'))
+					return res.error('Sensor "'+sensor.id+'" is already started');
+
+				res.log('Engaging sensor "'+sensor.id+'".');
+				sensor.delayedStart();
+			});
+		}).addDescription('Engage one or more sensors'));
+
+		describeArgumentsForQuery(sensorCommand.addCommand('off', function(req, res) {
+			getSensorsForQuery(req, res).forEach(function(sensor) {
+				if(!sensor.element.classList.contains('sensor--started'))
+					return res.error('Sensor "'+sensor.id+'" is not active');
+
+				res.log('Disengaging sensor "'+sensor.id+'".');
+				sensor.stop();
+			});
+		}).addDescription('Disengage one or more sensors'));
+
+		describeArgumentsForQuery(sensorCommand.addCommand('toggle', function(req, res) {
+			getSensorsForQuery(req, res).forEach(function(sensor) {
+				if(sensor.element.classList.contains('sensor--started')) {
+					res.log('Disengaging sensor "'+sensor.id+'".');
+					sensor.stop();
+				} else {
+					res.log('Engaging sensor "'+sensor.id+'".');
+					sensor.delayedStart();
+				}
+			});
+		}).addDescription('Switch on/off for one or more sensors'));
+
+		sensorCommand.addCommand('list', function(req, res) {
+			app.sensor.list().forEach(function(sensor, i) {
+				i > 0 && res.log('---');
+				//res.debug('bus0'+i+': ', sensor.getSummary());
+				res.keyValue('id', sensor.id);
+				res.keyValue('status', (sensor.isActive() ? 'enabled ' : 'disabled') + '\t' + [
+					'<a command="sensors on --sensor '+sensor.id+'">on</a>',
+					'<a command="sensors off --sensor '+sensor.id+'">off</a>',
+					'<a command="sensors toggle --sensor '+sensor.id+'">toggle</a>'
+				].join(' '));
+			});
+		});
 	};
-
-	Item.prototype.destroy = function() {
-		throw new Error('Not implemented.');
-	};
-
-
-	return Item;
 });
 ;(function(){
 
@@ -7573,7 +9040,7 @@ require.register("component-reduce/index.js", function(exports, require, module)
  * TODO: combatible error handling?
  */
 
-module.exports = function(arr, fn, initial){  
+module.exports = function(arr, fn, initial){
   var idx = 0;
   var len = arr.length;
   var curr = arguments.length == 3
@@ -7583,7 +9050,7 @@ module.exports = function(arr, fn, initial){
   while (idx < len) {
     curr = fn.call(null, curr, arr[idx], ++idx, arr);
   }
-  
+
   return curr;
 };
 });
@@ -7884,8 +9351,8 @@ function Response(req, options) {
   options = options || {};
   this.req = req;
   this.xhr = this.req.xhr;
-  this.text = this.req.method !='HEAD' 
-     ? this.xhr.responseText 
+  this.text = this.req.method !='HEAD'
+     ? this.xhr.responseText
      : null;
   this.setStatusProperties(this.xhr.status);
   this.header = this.headers = parseHeader(this.xhr.getAllResponseHeaders());
@@ -8046,7 +9513,7 @@ function Request(method, url) {
     var res = null;
 
     try {
-      res = new Response(self); 
+      res = new Response(self);
     } catch(e) {
       err = new Error('Parser is unable to parse the response');
       err.parse = true;
@@ -8688,214 +10155,85 @@ require.alias("superagent/lib/client.js", "superagent/index.js");if (typeof expo
 } else {
   this["superagent"] = require("superagent");
 }})();
-/*
- * $Id: base64.js,v 2.15 2014/04/05 12:58:57 dankogai Exp dankogai $
- *
- *  Licensed under the MIT license.
- *    http://opensource.org/licenses/mit-license
- *
- *  References:
- *    http://en.wikipedia.org/wiki/Base64
- */
+define('portfolio-manager/items/Item',[], function() {
 
-(function(global) {
-    'use strict';
-    // existing version for noConflict()
-    var _Base64 = global.Base64;
-    var version = "2.1.5";
-    // if node.js, we use Buffer
-    var buffer;
-    if (typeof module !== 'undefined' && module.exports) {
-        buffer = require('buffer').Buffer;
-    }
-    // constants
-    var b64chars
-        = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    var b64tab = function(bin) {
-        var t = {};
-        for (var i = 0, l = bin.length; i < l; i++) t[bin.charAt(i)] = i;
-        return t;
-    }(b64chars);
-    var fromCharCode = String.fromCharCode;
-    // encoder stuff
-    var cb_utob = function(c) {
-        if (c.length < 2) {
-            var cc = c.charCodeAt(0);
-            return cc < 0x80 ? c
-                : cc < 0x800 ? (fromCharCode(0xc0 | (cc >>> 6))
-                                + fromCharCode(0x80 | (cc & 0x3f)))
-                : (fromCharCode(0xe0 | ((cc >>> 12) & 0x0f))
-                   + fromCharCode(0x80 | ((cc >>>  6) & 0x3f))
-                   + fromCharCode(0x80 | ( cc         & 0x3f)));
-        } else {
-            var cc = 0x10000
-                + (c.charCodeAt(0) - 0xD800) * 0x400
-                + (c.charCodeAt(1) - 0xDC00);
-            return (fromCharCode(0xf0 | ((cc >>> 18) & 0x07))
-                    + fromCharCode(0x80 | ((cc >>> 12) & 0x3f))
-                    + fromCharCode(0x80 | ((cc >>>  6) & 0x3f))
-                    + fromCharCode(0x80 | ( cc         & 0x3f)));
-        }
-    };
-    var re_utob = /[\uD800-\uDBFF][\uDC00-\uDFFFF]|[^\x00-\x7F]/g;
-    var utob = function(u) {
-        return u.replace(re_utob, cb_utob);
-    };
-    var cb_encode = function(ccc) {
-        var padlen = [0, 2, 1][ccc.length % 3],
-        ord = ccc.charCodeAt(0) << 16
-            | ((ccc.length > 1 ? ccc.charCodeAt(1) : 0) << 8)
-            | ((ccc.length > 2 ? ccc.charCodeAt(2) : 0)),
-        chars = [
-            b64chars.charAt( ord >>> 18),
-            b64chars.charAt((ord >>> 12) & 63),
-            padlen >= 2 ? '=' : b64chars.charAt((ord >>> 6) & 63),
-            padlen >= 1 ? '=' : b64chars.charAt(ord & 63)
-        ];
-        return chars.join('');
-    };
-    var btoa = global.btoa ? function(b) {
-        return global.btoa(b);
-    } : function(b) {
-        return b.replace(/[\s\S]{1,3}/g, cb_encode);
-    };
-    var _encode = buffer
-        ? function (u) { return (new buffer(u)).toString('base64') } 
-    : function (u) { return btoa(utob(u)) }
-    ;
-    var encode = function(u, urisafe) {
-        return !urisafe 
-            ? _encode(u)
-            : _encode(u).replace(/[+\/]/g, function(m0) {
-                return m0 == '+' ? '-' : '_';
-            }).replace(/=/g, '');
-    };
-    var encodeURI = function(u) { return encode(u, true) };
-    // decoder stuff
-    var re_btou = new RegExp([
-        '[\xC0-\xDF][\x80-\xBF]',
-        '[\xE0-\xEF][\x80-\xBF]{2}',
-        '[\xF0-\xF7][\x80-\xBF]{3}'
-    ].join('|'), 'g');
-    var cb_btou = function(cccc) {
-        switch(cccc.length) {
-        case 4:
-            var cp = ((0x07 & cccc.charCodeAt(0)) << 18)
-                |    ((0x3f & cccc.charCodeAt(1)) << 12)
-                |    ((0x3f & cccc.charCodeAt(2)) <<  6)
-                |     (0x3f & cccc.charCodeAt(3)),
-            offset = cp - 0x10000;
-            return (fromCharCode((offset  >>> 10) + 0xD800)
-                    + fromCharCode((offset & 0x3FF) + 0xDC00));
-        case 3:
-            return fromCharCode(
-                ((0x0f & cccc.charCodeAt(0)) << 12)
-                    | ((0x3f & cccc.charCodeAt(1)) << 6)
-                    |  (0x3f & cccc.charCodeAt(2))
-            );
-        default:
-            return  fromCharCode(
-                ((0x1f & cccc.charCodeAt(0)) << 6)
-                    |  (0x3f & cccc.charCodeAt(1))
-            );
-        }
-    };
-    var btou = function(b) {
-        return b.replace(re_btou, cb_btou);
-    };
-    var cb_decode = function(cccc) {
-        var len = cccc.length,
-        padlen = len % 4,
-        n = (len > 0 ? b64tab[cccc.charAt(0)] << 18 : 0)
-            | (len > 1 ? b64tab[cccc.charAt(1)] << 12 : 0)
-            | (len > 2 ? b64tab[cccc.charAt(2)] <<  6 : 0)
-            | (len > 3 ? b64tab[cccc.charAt(3)]       : 0),
-        chars = [
-            fromCharCode( n >>> 16),
-            fromCharCode((n >>>  8) & 0xff),
-            fromCharCode( n         & 0xff)
-        ];
-        chars.length -= [0, 0, 2, 1][padlen];
-        return chars.join('');
-    };
-    var atob = global.atob ? function(a) {
-        return global.atob(a);
-    } : function(a){
-        return a.replace(/[\s\S]{1,4}/g, cb_decode);
-    };
-    var _decode = buffer
-        ? function(a) { return (new buffer(a, 'base64')).toString() }
-    : function(a) { return btou(atob(a)) };
-    var decode = function(a){
-        return _decode(
-            a.replace(/[-_]/g, function(m0) { return m0 == '-' ? '+' : '/' })
-                .replace(/[^A-Za-z0-9\+\/]/g, '')
-        );
-    };
-    var noConflict = function() {
-        var Base64 = global.Base64;
-        global.Base64 = _Base64;
-        return Base64;
-    };
-    // export Base64
-    global.Base64 = {
-        VERSION: version,
-        atob: atob,
-        btoa: btoa,
-        fromBase64: decode,
-        toBase64: encode,
-        utob: utob,
-        encode: encode,
-        encodeURI: encodeURI,
-        btou: btou,
-        decode: decode,
-        noConflict: noConflict
-    };
-    // if ES5 is available, make Base64.extendString() available
-    if (typeof Object.defineProperty === 'function') {
-        var noEnum = function(v){
-            return {value:v,enumerable:false,writable:true,configurable:true};
-        };
-        global.Base64.extendString = function () {
-            Object.defineProperty(
-                String.prototype, 'fromBase64', noEnum(function () {
-                    return decode(this)
-                }));
-            Object.defineProperty(
-                String.prototype, 'toBase64', noEnum(function (urisafe) {
-                    return encode(this, urisafe)
-                }));
-            Object.defineProperty(
-                String.prototype, 'toBase64URI', noEnum(function () {
-                    return encode(this, true)
-                }));
-        };
-    }
-    // that's it!
-})(this);
+	function quickHash(str) {
+		var hash = 0;
+		if (str.length == 0) return hash;
+		for (var i = 0; i < str.length; i++) {
+			char = str.charCodeAt(i);
+			hash = ((hash<<5)-hash)+char;
+			hash = hash & hash; // Convert to 32bit integer
+		}
+		return hash;
+	}
 
-if (this['Meteor']) {
-    Base64 = global.Base64; // for normal export in Meteor.js
-}
-;
-define("base64", (function (global) {
-    return function () {
-        var ret, fn;
-        return ret || global.Base64;
-    };
-}(this)));
+	function Item (info) {
+		this.id = null;
+		Object.keys(info).forEach(function(key) {
+			this[key] = info[key];
+		}.bind(this));
 
-define('portfolio/items/GithubItem',[
+		if(!this.id)
+			this.generateId();
+	}
+
+	Item.prototype.generateId = function() {
+		// Make up an ID
+		this.id = (this.name.replace(/\W+/g, '').substr(0,4) + '-' + quickHash(this.name).toString(36).replace(/\W+/g, '').substr(0,3))
+			.toLowerCase();
+	};
+
+	/**
+	 * @returns Promise
+	 */
+	Item.prototype.get = function () {
+		throw new Error('Not implemented.');
+	};
+
+	// Is in fact a controller
+	Item.prototype.create = function (req, res) {
+
+		res.header(this.name);
+		res.log(this.name.toUpperCase() + ' (type: '+this.type+')');
+		res.log('------------------------------------');
+
+		Object.keys(this).forEach(function(key) {
+			var value = this[key];
+			switch (typeof value) {
+				case 'string':
+				case 'number':
+					res.keyValue(key, value);
+				default:
+					return;
+			}
+		}.bind(this));
+
+	};
+
+	Item.prototype.destroy = function() {
+		throw new Error('Not implemented.');
+	};
+
+
+	return Item;
+});
+define('portfolio-manager/items/GithubItem',[
+	'promise',
 	'superagent',
 	'base64',
 	'markdown',
 
+	'window-manager',
+
 	'./Item'
 ], function(
+	Promise,
 	superagent,
 	base64,
 	markdown,
 
+	$window,
 
 	Item) {
 
@@ -8904,6 +10242,10 @@ define('portfolio/items/GithubItem',[
 	function GithubItem (info) {
 		Item.call(this, info);
 
+		this.githost = this.repository.substring(
+				this.repository.indexOf('@') + 1,
+			this.repository.indexOf(':')
+		);
 		this.username = this.repository.substring(
 			this.repository.indexOf(':') + 1,
 			this.repository.indexOf('/')
@@ -8912,7 +10254,7 @@ define('portfolio/items/GithubItem',[
 			this.repository.indexOf('/') + 1,
 			this.repository.length - 4
 		);
-		this.url = '<a href="https://www.github.com/'+this.username+ '/' +this.reponame+'" target="_blank">github.com/'+this.username+ '/' +this.reponame+'</a>';
+		this.url = '<a href="https://'+this.githost+'/'+this.username+ '/' +this.reponame+'" target="_blank">'+this.githost+'/'+this.username+ '/' +this.reponame+'</a>';
 		this.window = null;
 	}
 
@@ -8920,13 +10262,7 @@ define('portfolio/items/GithubItem',[
 	GithubItem.prototype.constructor = GithubItem;
 
 	GithubItem.prototype.get = function () {
-		var promises = [];
-
-		promises.push(this.getEndpoint());
-
-		promises.push(this.getReadme());
-
-		return Promise.all(promises);
+		return this.getEndpoint();
 	};
 
 	GithubItem.prototype.getEndpoint = function () {
@@ -8949,22 +10285,15 @@ define('portfolio/items/GithubItem',[
 	};
 
 	GithubItem.prototype.getReadme = function() {
-		if(this.readme)
-			return this.temporaryMarkdownShit('./' + this.readme);
-
-		return this.getEndpoint('readme').then(function(result) {
-			return base64.decode(result.content);
-		});
+		throw new Error('Item has no README');
 	};
 	// Is in fact a controller
 	GithubItem.prototype.create = function (req, res) {
 		Item.prototype.create.apply(this, arguments);
 		res.log();
 		res.log('Downloading repository intel...');
-		return this.get().then(function(responses) {
-			var summaryResponse = responses[0],
-				readmeResponse = responses[1];
-
+		return this.get().then(function(summaryResponse) {
+			res.log('Retrieved ' + (new Date()));
 			res.log();
 			res.log('GitHub info:');
 			if(summaryResponse) {
@@ -8985,33 +10314,21 @@ define('portfolio/items/GithubItem',[
 				res.error('Github summary API could not be reached.');
 			}
 
-			if(readmeResponse) {
-				res.log('Opening README.md in a new window...');
-				this.window = req.app.window.openNewMarkdownWindow(
-					this.name + '/ README.md',
-					readmeResponse,
-					this.id);
+			if(this.readme) {
 
+					this.temporaryMarkdownShit('README.md').then(function (readmeResponse) {
 
-				var nodeIterator = document.createNodeIterator(
-					this.window.contentElement,
-					NodeFilter.SHOW_ELEMENT,
-					function(node) {
-						return !!node.getAttribute('src')
-					}
-				);
+						res.log('Opening README.md in a new window...');
+						this.window = new $window.MarkdownWindow(
+							'md:' + this.id,
+							this.name + '/ README.md',
+							readmeResponse
+						);
+						res.onceQueueFlushed(function() {
+							req.app.window.openNewWindow(this.window);
+						}.bind(this));
+					}.bind(this));
 
-				var node;
-				while ((node = nodeIterator.nextNode())) {
-					var src = node.getAttribute('src');
-					if(src.indexOf('./') === 0) {
-						node.setAttribute('src', 'https://raw.githubusercontent.com/wvbe/interfais/develop/' + src.substr(2));
-					}
-				}
-
-//				this.window.addDestroyCallback(function() {
-//					//
-//				});
 			} else {
 				res.log('No README.md found');
 			}
@@ -9025,9 +10342,13 @@ define('portfolio/items/GithubItem',[
 	};
 
 	GithubItem.prototype.temporaryMarkdownShit = function(file) {
+		var dir = this.dir;
 		return new Promise(function(resolve, reject) {
-			require(['text!'+require.toUrl('portfolio/' + file)], function(blaat) {
-				resolve(blaat);
+			superagent.get(require.toUrl('portfolio/' + dir + '/' + file), function(result) {
+				if(!result.ok) {
+					return reject(result.error);
+				}
+				resolve(result.text);
 			});
 		});
 	};
@@ -9050,9 +10371,15 @@ define('portfolio/items/GithubItem',[
 
 		var node;
 		while ((node = nodeIterator.nextNode())) {
-			var src = node.getAttribute('src');
+			var src = node.getAttribute('src'); // @TODO: hardcoded branch name, refer to branch in json
 			if(src.indexOf('./') === 0) {
-				node.setAttribute('src', 'https://raw.githubusercontent.com/wvbe/interfais/develop/' + src.substr(2));
+				node.setAttribute('src', [
+					'https://raw.githubusercontent.com',
+					this.username,
+					this.reponame,
+					this.branch,
+					src.substr(2)
+				].join('/'));
 			}
 		}
 
@@ -9061,15 +10388,21 @@ define('portfolio/items/GithubItem',[
 
 	return GithubItem;
 });
-define('portfolio/items/ScriptItem',[
+define('portfolio-manager/items/ScriptItem',[
+	'require',
+	'promise',
+	'window-manager',
 	'./Item'
 ], function(
+	require,
+	Promise,
+	$window,
 	Item) {
+
+	window.define = define;
 
 	function ScriptItem (info) {
 		Item.call(this, info);
-			// this.script = info.script;
-			// this.options = info.options;
 
 		if(!this.script)
 			throw new Error('ScriptItem needs a script name specified');
@@ -9080,9 +10413,12 @@ define('portfolio/items/ScriptItem',[
 
 	ScriptItem.prototype.get = function () {
 		return new Promise(function(resolve, reject) {
-			require([this.script], function(Script) {
+			require(['portfolio/'+this.script+'/src/main'], function(Script) {
+				if(!Script) {
+					return reject(new Error('Could not get script "'+this.script+'", for it is empty. Fucksake...'));
+				}
 				resolve(Script);
-			});
+			}.bind(this));
 		}.bind(this));
 	};
 
@@ -9091,56 +10427,210 @@ define('portfolio/items/ScriptItem',[
 		Item.prototype.create.apply(this, arguments);
 
 		res.log();
-		res.log('Downloading script...');
+		res.log('Downloading script dependencies...');
 		return this.get().then(function(Script) {
+			if(this.instance)
+				return res.error('Script item is already instantiated');
+
 			res.debug('Executing script with ' + Object.keys(this.options).length + ' options', this.options);
-			var script = new Script(this.options),
-				element = typeof script.getElement === 'function' ? script.getElement() : script.element;
+
+			var instance = new Script(this.options),
+				element = typeof instance.getElement === 'function' ? instance.getElement() : instance.element;
+
+			this.instance = instance;
 
 			if(element)
-				this.window = req.app.window.openNewWindow(
+				this.window = new $window.BasicWindow(
+					'js:' + this.id,
 					this.name,
-					element,
-					this.id);
+					element);
 
 			this.window.addFlag('script');
 
 			this.window.addDestroyCallback(function() {
-				script.stop();
-			});
-		}.bind(this));
+				res.debug('Closing script window, send SIGTERM');
+				this.destroy();
+			}.bind(this));
+
+			res.onceQueueFlushed(function() {
+				req.app.window.openNewWindow(this.window);
+			}.bind(this));
+
+		}.bind(this)).catch(function(err) {
+			res.error(err);
+		});
 	};
 
 	ScriptItem.prototype.destroy = function() {
-		this.window.destroy();
+		this.instance.stop();
+		delete this.instance;
 	};
 
 	return ScriptItem;
 });
-define('portfolio/PortfolioManager',[
+define('portfolio-manager/items/YoutubeItem',[
+	//'youtubePlayer',
+	'window-manager',
+
+	'./Item'
+], function(
+	//youtubePlayer,
+	$window,
+
+	Item) {
+
+	var SEP = '\t';
+
+	function YoutubeItem (info) {
+		Item.call(this, info);
+		this.link = '<a href="https://www.youtube.com/watch?v='+this.youtube+'" target="_blank" title="Click to open the Youtube page for this video">youtube.com/watch?v='+this.youtube+'</a>';
+	}
+
+	YoutubeItem.prototype = Object.create(Item.prototype);
+	YoutubeItem.prototype.constructor = YoutubeItem;
+
+	YoutubeItem.prototype.get = function () {
+
+	};
+
+	// Is in fact a controller
+	YoutubeItem.prototype.create = function (req, res) {
+		Item.prototype.create.apply(this, arguments);
+		res.log();
+		res.log('Opening video in a new window');
+
+		var video = document.createElement('iframe');
+		video.setAttribute('width', 640);
+		video.setAttribute('height', 480);
+		video.setAttribute('src', '//www.youtube.com/embed/' + this.youtube);
+		video.setAttribute('allowfullscreen', 'true');
+		video.setAttribute('frameborder', 0);
+		this.window = new $window.BasicWindow('yt:' + this.id, this.name, video);
+		this.window.addFlag('video');
+		this.window.isResizable = false;
+		res.onceQueueFlushed(function() {
+			req.app.window.openNewWindow(this.window);
+		}.bind(this));
+	};
+
+	YoutubeItem.prototype.destroy = function() {
+		this.window.destroy();
+	};
+
+	return YoutubeItem;
+});
+define('portfolio-manager/items/ImageItem',[
+	'window-manager',
+
+	'./Item'
+], function(
+	$window,
+
+	Item) {
+
+	var SEP = '\t';
+
+	function ImageItem (info) {
+		Item.call(this, info);
+
+	}
+
+	ImageItem.prototype = Object.create(Item.prototype);
+	ImageItem.prototype.constructor = ImageItem;
+
+	ImageItem.prototype.get = function () {
+
+	};
+
+
+	// Is in fact a controller
+	ImageItem.prototype.create = function (req, res) {
+		Item.prototype.create.apply(this, arguments);
+		res.log();
+		res.log('Opening new image gallery');
+
+		this.window = new $window.ImageWindow('img:' + this.id, this.name, this.images.map(function(imageFile) {
+			return this.dir + '/' + imageFile;
+		}.bind(this)));
+
+		res.onceQueueFlushed(function() {
+			req.app.window.openNewWindow(this.window);
+		}.bind(this));
+	};
+
+	ImageItem.prototype.destroy = function() {
+		this.window.destroy();
+	};
+
+	return ImageItem;
+});
+define('portfolio-manager/PortfolioManager',[
+	'promise',
 	'object-store',
+	'superagent',
 
 	'./items/Item',
 	'./items/GithubItem',
 	'./items/ScriptItem',
-
-	'text!./info.json'
+	'./items/YoutubeItem',
+	'./items/ImageItem'
 ], function(
+	Promise,
 	ObjectStore,
+	superagent,
 
 	Item,
 	GithubItem,
 	ScriptItem,
+	YoutubeItem,
+	ImageItem) {
 
-	info) {
-
-	function PortfolioManager (portfolioObjects) {
+	function PortfolioManager () {
 		ObjectStore.call(this);
-		this.readSummaries(JSON.parse(info).objects);
 	}
 
 	PortfolioManager.prototype = Object.create(ObjectStore.prototype);
 	PortfolioManager.prototype.constructor = PortfolioManager;
+
+	PortfolioManager.prototype.load = function() {
+
+		return new Promise(function(resolve, reject) {
+			if (this._objects)
+				return resolve(this._objects);
+
+			superagent.get(this.getUrlForPath('info.json'), function (result) {
+				if (!result.ok) {
+					reject(new Error('Could not initialize portfolio'));
+				}
+
+				this._objects = result.body.objects;
+
+				resolve(this._objects);
+			}.bind(this)).set('Accept', 'application/json').on('error', function (err) {
+				console.error(err);
+				reject(err);
+			});
+
+		}.bind(this)).then(function(objects) {
+			this.readSummaries(objects);
+		}.bind(this));
+	};
+
+	PortfolioManager.prototype.getUrlForPath = function(file) {
+		return require.toUrl('portfolio/' + file);
+	};
+
+	PortfolioManager.prototype.getTextFromServer = function() {
+		return new Promise(function(resolve, reject) {
+			superagent.get(this.getUrlForPath(file), function(result) {
+				if(!result.ok) {
+					return reject(result.error);
+				}
+				resolve(result.text);
+			});
+		}.bind(this));
+	};
+
 
 	PortfolioManager.prototype.readSummaries = function(portfolioObjects) {
 		portfolioObjects.forEach(function(portfolioObject) {
@@ -9154,6 +10644,10 @@ define('portfolio/PortfolioManager',[
 				return new GithubItem(portfolioObject);
 			case 'script':
 				return new ScriptItem(portfolioObject);
+			case 'image':
+				return new ImageItem(portfolioObject);
+			case 'youtube':
+				return new YoutubeItem(portfolioObject);
 			default:
 				return new Item(portfolioObject);
 		}
@@ -9180,23 +10674,215 @@ define('portfolio/PortfolioManager',[
 
 	return PortfolioManager;
 });
-define('portfolio/main',[
-	'text!./info.json',
+define('portfolio-manager/main',[
 
 	'./PortfolioManager'
 ], function(
-	infoJson,
-
 	PortfolioManager
 	) {
 	return {
-		info: JSON.parse(infoJson),
-
 		PortfolioManager: PortfolioManager
 	};
 });
-define('portfolio', ['portfolio/main'], function (main) { return main; });
+define('portfolio-manager', ['portfolio-manager/main'], function (main) { return main; });
 
+define('portfolio-manager/commands/view',[], function () {
+	var SEP = '\t';
+	return function(app) {
+		function getPortfolioItemForArguments(req) {
+			return app.portfolio.get(req.route[1]);
+		}
+
+		app.command.addCommand('view', function(req, res) {
+			if(!req.route[1])
+				return viewListController.apply(this, arguments);
+			return viewItemController.apply(this, arguments);
+		})
+			.addDescription('Portfolio')
+			.addOption('search', 's', 'Search for portfolio items')
+			.isGreedy();
+
+		function viewItemController (req, res) {
+			var item = getPortfolioItemForArguments(req);
+
+			if(!item) {
+				return res.error(new Error('No such portfolio item ("'+req.route[1]+'")'));
+			}
+
+			item.create(req,res);
+		}
+
+		function viewListController (req, res) {
+
+			res.header('Portfolio');
+
+			res.log('Sorted and unsorted works of multimedia.');
+
+			var lastEnumeratedCategory = null,
+				portfolioList = app.portfolio.list();
+
+
+			if(req.options.search) {
+				var search = new RegExp(req.options.search, "i");
+				portfolioList = portfolioList.filter(function(item) {
+					if(item.name && item.name.match(search))
+						return true;
+					if(item.description && item.description.match(search))
+						return true;
+					if(item.category && item.category.match(search))
+						return true;
+					return false;
+				});
+			}
+
+			portfolioList = portfolioList.sort(function(a,b) {
+				return a.category.toLowerCase() == b.category.toLowerCase() ? (
+						a.name.toLowerCase() == b.name.toLowerCase() ? 0 : a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1
+					) : a.category.toLowerCase() < b.category.toLowerCase() ? -1 : 1;
+			});
+
+			res.log();
+
+
+			if(!portfolioList.length) {
+				return res.error(new Error('No portfolio items found for this query ("'+req.options.search+'").'));
+			}
+
+
+			var licenses = {};
+			portfolioList.forEach(function(item) {
+				item.category != lastEnumeratedCategory && res.log();
+				var itemHtmlString = '<a command="view '+item.id+'">'+item.id+'</a>\t"' + item.name + '"';
+				res.keyValue(item.category == lastEnumeratedCategory ? null : item.category, itemHtmlString);
+				lastEnumeratedCategory = item.category;
+				licenses[item.id] = item.license || 'none/proprietary';
+			});
+
+			licenses._contact = 'wvbe (wybe@x-54.com)';
+
+			res.log();
+
+			res.debug('(c) me unless stated otherwise, various licenses, type <a command="who">who</a> or <a command="debug">debug</a> for more info.', licenses);
+		}
+	};
+
+
+
+});
+define('portfolio-manager/commands/bubble',[], function () {
+	return function(app) {
+		var bubbleCommand = app.command.addCommand('bubble', function (req, res) {
+			res.log('Bubble script is booting up. You might want to check out <a command="help bubble">help bubble</a> to find out how to play with it.');
+			getActiveBubble(req, res).then(function (bubble) {
+				res.log('Bubble booted');
+			})
+		})
+				.addDescription('Play around with '),
+			bubbleConfigurables = ['node_size', 'radius_near', 'radius_far', 'radius_void', 'attraction_multiplier', 'attraction_power', 'repulsion_multiplier', 'repulsion_power', 'slowdown_multiplier', 'node_color', 'line_color', 'gravity'],
+			bubbleShortConfigurables = ['s', 'N', 'F', 'V', 'a', 'A', 'p', 'P', 'v', 'c', 'C', 'g'];
+
+		function getActiveBubble(req, res) {
+			var item = app.portfolio.get('bubb-msk');
+
+			if(!item.window || !item.instance) {
+				res.log('Bubble requires to be started first, starting...');
+				return item.create(req, res).then(function() {
+					return item.instance;
+				});
+			}
+
+			return new Promise(function(resolve) {
+				return resolve(item.instance);
+			});
+		}
+
+		function createConfigurationWindow(activeBubble, configurableProperties) {
+			var configElement = document.createElement('div');
+
+			Object.keys(configurableProperties).forEach(function (propertyKey) {
+				var propertyConfig = configurableProperties[propertyKey];
+
+
+			});
+		}
+
+		var bubbleConfigCommand = bubbleCommand.addCommand('config', function(req, res) {
+			getActiveBubble(req, res).then(function(bubble) {
+				res.log('Configuring bubble...');
+				var newConfig = {};
+
+				if (!Object.keys(req.options).length) {
+					res.error(new Error('Nothing was updated because you did not specify any properties, type <a command="help bubble config">help bubble config</a> for info.'));
+					return;
+				}
+
+				bubbleConfigurables.forEach(function(key) {
+					if(req.options[key] === undefined)
+						return;
+
+					newConfig[key] = (''+parseFloat(req.options[key]) == req.options[key]) ? parseFloat(req.options[key]) : req.options[key];
+
+					res.log('\t' + key + '\t' + newConfig[key]);
+				});
+
+				if (!Object.keys(newConfig).length) {
+					res.error(new Error('No valid configuration properties specified, type <a command="help bubble config">help bubble config</a> for info.'));
+					return;
+				}
+
+				bubble.reconfig(newConfig);
+			});
+		})
+			.addDescription('Reconfigure parameters that define the bubble behaviour');
+
+		bubbleConfigurables.forEach(function(opt, i) {
+			bubbleConfigCommand.addOption(opt, bubbleShortConfigurables[i]);
+		});
+
+		bubbleCommand.addCommand('explode', function(req, res) {
+			getActiveBubble(req, res).then(function(bubble) {
+				var force = req.options.force !== undefined ? parseFloat(req.options.force) : 1,
+					radius = req.options.radius !== undefined ? parseFloat(req.options.radius) : 100
+				res.log('Exploding from center (force='+force+', radius='+radius+')');
+				bubble.averageFuck(force, radius);
+			});
+		})
+			.addDescription('Explode the bubble from the center of its mass')
+			.addOption('force', 'f', 'Amount of force exerted')
+			.addOption('radius', 'r', 'Size of the blast radius');
+	};
+});
+define('portfolio-manager/module',[
+	'./main',
+	'./commands/view',
+	'./commands/bubble'
+], function (
+	$portfolio,
+	viewModule,
+	bubbleModule
+
+) {
+	var SEP = '\t';
+	return function(app) {
+
+		app.portfolio = new $portfolio.PortfolioManager();
+		app.output.async('PRELOAD\tportfolio items', function(res, rej) {
+			return app.portfolio.load().then(function() {
+				app.output.log();
+				app.output.log('All done, loaded '+app.portfolio.list().length+' portfolio items.');
+				res(true);
+			}).catch(function(err) {
+				app.output.log();
+				app.output.log('Could not load portfolio items:');
+				app.output.error(new Error(err.message));
+				res(true);
+			});
+		});
+
+		viewModule.call(this, app);
+		bubbleModule.call(this, app);
+	};
+});
 define('controllers/webcam',[], function() {
 
 	function Webcam() {
@@ -9229,8 +10915,9 @@ define('controllers/webcam',[], function() {
 			if(cb)
 				cb(null, this);
 		}.bind(this), function (error) {
+			console.log(error);
 			if(cb)
-				cb(new Error('No webcam'));
+				cb(new Error('Webcam access denied' + (error ? ': '+ (error.message || error.name) : '')));
 		});
 	};
 
@@ -9256,14 +10943,15 @@ define('controllers/webcam',[], function() {
 			webcamWindow;
 
 		webcamCommand.addCommand('on', function(req, res) {
-			res.async('Accessing webcam', function(res, rej) {
+			res.async('Accessing webcam', function(resolve, rej) {
 				webcam.start(function(err, stream) {
-					if(err)
-						return rej(err);
+					if(err) {
+						res.error(err);
+					} else {
+						webcamWindow = app.window.openNewWindow('Webcam', webcam.element);
+					}
 
-					webcamWindow = app.window.openNewWindow('Webcam', webcam.element);
-
-					res(true);
+					resolve(true);
 				});
 			});
 		}).addDescription('Engage webcam');
@@ -9275,180 +10963,60 @@ define('controllers/webcam',[], function() {
 	};
 
 });
-define('controllers/gyro',[
-	'sensor-manager'
-], function (sensorManager) {
-
-
-	return function(app) {
-
-
-		var gyroCommand = app.command.addCommand('gyro'),
-			gyroSensor = app.sensor.addSensor(new sensorManager.GyroBansheeSensor('gyro', {
-				datapointsPerSecond: 40,
-				excitementDecay: 0.7
-			}), null, true);
-
-		gyroCommand.addCommand('on', function(req, res) {
-			if(gyroSensor.isActive())
-				throw new Error('Gyro is already active');
-
-			res.log('Initializing gyro tracker, detecting features...');
-
-			var features = gyroSensor.getFeatures();
-			res.log('... detected ' + features.length + ' gyro features: ' + features.join(', '));
-
-			if(!features.length)
-				return res.log('Initializing gyro aborted, no detected features');
-
-			gyroSensor.start();
-
-			res.log('Gyro engaged, polling rate ' + (1000/gyroSensor.getFrequency()) + '/second');
-		}).addDescription('Engage webcam');
-
-		gyroCommand.addCommand('off', function(req, res) {
-			if(!gyroSensor.isActive())
-				throw new Error('Gyro was not active');
-
-			gyroSensor.stop();
-
-			res.log('Gyro disengaged.');
-		}).addDescription('Disengage webcam');
-	};
-
-});
-define('controllers/debug',[], function() {
-
-	return function(app) {
-
-		var debugCommand = app.command.addCommand('debug', function(req, res) {
-			if(app.element.classList.contains('debug-mode')) {
-				req.command.getCommandByName('off').execute(req, res);
-			} else {
-				req.command.getCommandByName('on').execute(req, res);
-			}
-		})
-			.addDescription('Toggle debug mode');
-
-		debugCommand.addCommand('on', function(req, res) {
-				app.element.classList.add('debug-mode');
-				app.output.scrollToBottom(); // avoid waiting 50ms for output-and-scroll
-				return res.log('Debug mode engaged');
-			})
-			.addDescription('Engage debug mode');
-
-		debugCommand.addCommand('off', function(req, res) {
-				app.element.classList.remove('debug-mode');
-				return res.log('Debug mode disengaged');
-			})
-			.addDescription('Disengage debug mode');
-
-		debugCommand.addCommand('prune', function(req, res) {
-				req.app.output.pruneRenderedOutput(req.options.length || req.options.l || 5);
-			})
-			.addDescription('Trim output log to given length, defaults to 5')
-			.addOption('length', 'l', 'Number of log items to retain', false, 'n');
-
-	};
-
-});
-define('controllers/help',[
-], function () {
-	var SEP = '\t',
-		SEPP = SEP + SEP;
-
-//			{
-//				long: long,
-//				short: short,
-//				description: description,
-//				required: !!required,
-//				type: type,
-//				example: example
-//			}
-
-	return function(app) {
-		app.command.addCommand('help', function(req, res) {
-			var commandManager = req.app.command,
-				root = commandManager.getCommandForRoute(req.route.slice(1), true);
-
-			res.log('HELP FILE FOR ' + root.getRoute().join('/').toUpperCase()+'');
-
-			if(root.description)
-				res.log(root.description);
-
-			if(root.listCommands().length) {
-				res.log();
-				res.log('Child commands');
-				root.listCommands().sort(function(a, b) {
-					return a.name < b.name ? -1 : 1;
-				}).forEach(function (command) {
-					res.log(SEP + '<a href="/help/'+command.getRoute().slice(1).join('/')+'">?</a>' + ' ' + '<a href="/'+command.getRoute().slice(1).join('/')+'">'+command.name+'</a>' + SEPP + command.description);
-				});
-			}
-
-			if(root.listOptions().length) {
-				res.log();
-				res.log('Options');
-				root.listOptions().sort(function(a, b) {
-					return a.long < b.long ? -1 : 1;
-				}).forEach(function (option) {
-					res.log(SEP + [
-						option.short ? '-' + option.short : null,
-							'--' + option.long + (option.type ? ' &#60;' + option.type + '&#62;' : ''),
-						option.description].join(SEP));
-				});
-			}
-		})
-			.addDescription('Prints the help files, sort of')
-			.isGreedy();
-
-		app.command.addCommand('wtf?', function(req, res) {
-			res.log('You have reached the help files for those who are truly lost on the meaning of this website. It will explain:');
-			res.log('- What you can find on this site');
-			res.log('- Why this site is the way it is');
-			res.log('- How you can live with it');
-			res.log('Opening in a new window...');
-			res.log('... it\'s one of the square boxes saying "WTF?"');
-			require(['text!controllers/wtf.md'], function(wtfMd) {
-				req.app.window.openNewMarkdownWindow('WTF?', wtfMd, 'WTF-HELP');
-			})
-		}).addDescription('Help texts for those who are truly lost');
-	};
-
-
-
-});
-define('controllers/view',[
-], function () {
+define('controllers/who',[
+	'window-manager'
+], function ($window) {
 	var SEP = '\t';
+
+	var profileBorn = new Date('July 10, 1988 8:00:00 GMT'),
+		profileInformation = {
+		name: 'Wybe Minnebo',
+		gender: 'Male',
+		born: profileBorn.toDateString() + ' ' + profileBorn.toTimeString(),
+		nationality: 'NL (the Netherlands)'
+	};
+
 	return function(app) {
+		app.command.addCommand('who', function(req, res) {
+
+			res.log('Requesting WHOIS information on: Wybe Minnebo');
+			res.log(SEP + 'Encrypting something very difficult');
+			res.log(SEP + 'Request ID is NS@-0XEE-RWJ-B' + Math.floor(100000 + 899999 * Math.random()));
+			res.async('Sattelite response decrypted.', function(resolve, reject) {
+				setTimeout(function() {
+					res.log();
+					Object.keys(profileInformation).forEach(function(key) {
+						res.keyValue(key, profileInformation[key]);
+					});
+
+					if(req.options.flat)
+						return resolve(true);
 
 
-		function getPortfolioItemForArguments(req) {
-			return app.portfolio.get(req.route[1]);
-		}
+					res.log();
+					res.log('Opening WHOIS window...');
+					require(['text!controllers/who.md'], function(wtfMd) {
+						var window = new $window.MarkdownWindow('WHOIS', '0x.ee ~ wybe minnebo', wtfMd),
+							image = new Image();
+						image.src = 'images/mugshot.jpg';
 
-		var viewCommand = app.command.addCommand('view', function(req, res) {
-			if(!req.route[1]) {
-				res.header('Portfolio');
-				app.portfolio.list().forEach(function(item) {
-					res.log('<a href="/view/'+item.id+'">' + item.name + '</a>');
-				});
+						try {
+							req.app.window.openNewWindow(window);
+							window.documentElement.insertBefore(image, window.documentElement.firstChild);
+							image.classList.add('pull-left');
+						} catch (e) {
+							res.error(e);
+						}
 
-				return;
+						resolve(true);
+					});
 
-			}
-			var item = getPortfolioItemForArguments(req);
+				}, 250 + 250 * Math.random())
+			});
 
-			if(!item) {
-				return res.error(new Error('No such portfolio item ("'+req.route[1]+'")'));
-			}
-
-			item.create(req,res);
 		})
-			.addDescription('Portfolio')
-			.isGreedy();
-
+			.addDescription('Find WHOIS info on the guy behind 0x.ee')
+			.addOption('flat', 'f', 'Do not open profile in a window');
 	};
 
 
@@ -9456,6 +11024,32 @@ define('controllers/view',[
 });
 define('controllers/pages',[], function () {
 	return function (app) {
+
+
+		// app.command.addCommand('info', function(req, res) {
+		// 	res.log([
+		// 		'ABOUT 0x.ee',
+		// 		'-----------',
+		// 		'',
+		// 		'Works of code, illustration, CGI, video etc. displayed on this site are (c) wybe minnebo unless otherwise specified.',
+		// 		'',
+		// 		'0x.ee codebase 3rd party Bower dependencies',
+		// 		'\tgyro.js',
+		// 		'\tjquery',
+		// 		'\tmarkdown',
+		// 		'\tminimist (ported from npm)',
+		// 		'\trequirejs',
+		// 		'\trequirejs-text',
+		// 		'',
+		// 		'I tip my hat to the opensource community.',
+		// 	])
+		// })
+		// 	.addDescription('Tells you what\'s what');
+
+	};
+});
+define('controllers/motd',[], function () {
+	return function(app) {
 
 		app.command.addCommand('motd', function (req, res) {
 //			res.log([
@@ -9499,248 +11093,142 @@ define('controllers/pages',[], function () {
 				'Welcome to 0x.ee v 3.0-rc1, it has regenerative javascript and extra-futuristic flavour. Though the command line interface doesn\'t feel as HTML5 as it actually is, CLI is the most powerful way of communicating with a \'puter.',
 				'',
 				'Here\'s some commands to get you started. You can also click on \'em:',
-				'<a href="/help">help</a>\tList all available commands, and helps you with them',
-				'<a href="/view">view</a>\tMy portfolio stuff! That\'s what the site is for, of course'
+				'',
+				'*  *  *  *',
+				'',
+				'YOU HAVE REACHED THE PORTFOLIO SITE OF WYBE MINNEBO',
+				'interaction designer, javascript developer and what have you',
+				'',
+				'Click or type any of the following to begin:',
+				'&#62;  <a command="help">help</a>  &#60;\tList all available commands, and helps you with them',
+				'&#62;  <a command="view">view</a>  &#60;\tMy portfolio stuff! That\'s what the site is for, of course'
+
 			]);
 		})
 			.addDescription('Runs at boot-time');
 
-
-	};
-});
-define('controllers/window',[], function () {
-	return function(app) {
-		var windowManager = app.window,
-			windowCommand = app.command.addCommand('window');
-
-		windowCommand.addCommand('new', function() {
-			windowManager.openNewWindow('fuckin test window', document.createTextNode('Fuuuuuu'));
-		})
-			.addDescription('Create a new window just for the heck of it');
 	};
 
-});
-define('controllers/misc',[], function () {
-
-	return function(app) {
-
-		function getSensorsForQuery(req) {
-			var selectedSensors = [];
-			if(req.options.a || req.options.all) {
-				selectedSensors = app.sensor.list();
-			} else if(req.options.s || req.options.sensor) {
-				selectedSensors.push(app.sensor.get(req.options.s || req.options.sensor));
-			}
-
-			if(!selectedSensors.length)
-				return [];
-
-			return selectedSensors;
-		}
-
-		function describeArgumentsForQuery(command) {
-			command
-				.addOption('all', 'a', 'Select all sensors')
-				.addOption('sensor', 's', 'Select sensor by ID');
-		}
-		var sensorCommand = app.command.addCommand('sensors')
-			.addDescription('Sensory controls');
-
-		describeArgumentsForQuery(sensorCommand.addCommand('on', function(req, res) {
-			getSensorsForQuery(req).forEach(function(sensor) {
-				if(sensor.element.classList.contains('sensor--started'))
-					return res.error('Sensor "'+sensor.id+'" is already started');
-
-				res.log('Engaging sensor "'+sensor.id+'".');
-				sensor.start();
-			});
-		}).addDescription('Engage one or more sensors'));
-
-		describeArgumentsForQuery(sensorCommand.addCommand('off', function(req, res) {
-			getSensorsForQuery(req).forEach(function(sensor) {
-				if(!sensor.element.classList.contains('sensor--started'))
-					return res.error('Sensor "'+sensor.id+'" is not active');
-
-				res.log('Disengaging sensor "'+sensor.id+'".');
-				sensor.stop();
-			});
-		}).addDescription('Disengage one or more sensors'));
-
-		describeArgumentsForQuery(sensorCommand.addCommand('toggle', function(req, res) {
-			getSensorsForQuery(req).forEach(function(sensor) {
-				if(sensor.element.classList.contains('sensor--started')) {
-					res.log('Disengaging sensor "'+sensor.id+'".');
-					sensor.stop();
-				} else {
-					res.log('Engaging sensor "'+sensor.id+'".');
-					sensor.start();
-				}
-			});
-		}).addDescription('Switch on/off for one or more sensors'));
-	};
 });
 require([
-	'input-manager',
-	'output-manager',
-	'command-manager',
-	'request-manager',
-	'window-manager',
-	'sensor-manager',
-	'portfolio',
+	'base64',
+	'core',
+
+	'sensor-manager/module',
+	'portfolio-manager/module',
 
 	'controllers/webcam',
-	'controllers/gyro',
-	'controllers/debug',
-	'controllers/help',
-	'controllers/view',
+	'controllers/who',
 	'controllers/pages',
-	'controllers/window',
-
-	'controllers/misc',
+	'controllers/motd'
 
 ], function (
-	$input,
-	$output,
-	$command,
-	$request,
-	$window,
-	$sensor,
-	$portfolio,
+	base64,
+	core,
+
+	sensorModule,
+	portfolioModule,
 
 	webcamModule,
-	gyroModule,
-	debugModule,
-	helpModule,
-	viewModule,
+	whoModule,
 	pagesModule,
-	windowModule,
+	motdModule
 
-	miscModule
-
-) {
+	) {
 	function Application(element) {
-		this.element = element || document.body;
-		this.input = new $input.InputManager();
-		this.output = new $output.OutputManager();
-		this.command = new $command.CommandManager();
-		this.request = new $request.RequestManager();
-		this.sensor = new $sensor.SensorManager();
-		this.window = new $window.WindowManager();
-		this.portfolio = new $portfolio.PortfolioManager();
+		core.Application.call(this, element);
 
-		this.input.captureMagicHref(this.element);
+		this.command.addDescription([
+			'Welcome to 0x.ee... This site (or rather, application), works through written commands. For your viewing pleasure, any highlighted text is clickable as a shortcut to typing something.',
+			'',
+			'Click the "?" for more detailed information about a specific command.'
+		]);
 
-		this.sensor.addSensor('keyboard');
-		this.sensor.addSensor('operations');
-		this.sensor.addSensor('i/o');
+
+		var fakeLoadInfo = {
+			time: window.performance.timing.domContentLoadedEventEnd - window.performance.timing.navigationStart,
+			timestamp: new Date().getTime(),
+			modules: [
+				'sattelite firmware',
+				'conferencing link',
+				'telegraphy module',
+				'TWS optical enchancer',
+				'climate control',
+				'burst creativity generator'
+			],
+			satLinkProtocol: '0x.ee://',
+			satLinkConnected: false,
+			satLinkStrategy: 'optimistic'
+		};
+
+		this.output.debug('Loaded 0x.ee system 3...', fakeLoadInfo);
+		this.output.log([
+			' ___ __ __   _____ _____    _____   ___   ___     _____ _____ ___   ',
+			'|   |  |  | |   __|   __|  |  |  | |_  | |   |___| __  |     |_  |  ',
+			'| | |-   -|_|   __|   __|  |  |  |_|_  |_| | |___|    -|   --|_| |_ ',
+			'|___|__|__|_|_____|_____|   \\___/|_|___|_|___|   |__|__|_____|_____|'
+		]);
+
+		var ieVersion = detectIE();
+		if(ieVersion) {
+			this.output.error('Warning: You\'re using Internet Explorer '+ieVersion+'; some UI functionality may be broken. Recommended browsers are Chromium, Google Chrome or Mozilla Firefox, which are also all free.');
+		}
+		this.output.onceQueueFlushed(function() {
+			var hashbang = (window.location.hash || '').trim();
+
+			if(hashbang && hashbang.substr(0,3) === '#!/') {
+				if(hashbang.substr(3,1) === '~')
+					this.input.submit(base64.decode(hashbang.substr(4)));
+				else
+					this.input.submit(hashbang.substr(3));
+			} else {
+				this.input.submit('motd');
+			}
+
+		}.bind(this));
 
 		[
+			sensorModule,
+			portfolioModule,
+
 			webcamModule,
-			gyroModule,
-			debugModule,
-			miscModule,
-			helpModule,
-			viewModule,
+			whoModule,
 			pagesModule,
-			windowModule
+			motdModule
 		].forEach(function(module) {
 			module(this);
 		}.bind(this));
 
-
-		// register value congruent to actual HTML length for a logged message
-		this.output.onRender(function(output, target) {
-			var wrap = document.createElement('div');
-			wrap.appendChild(target.cloneNode(true));
-			this.sensor.registerValue('i/o', wrap.innerHTML.length/750);
-		}.bind(this));
-
-		// excite the banshee when user types
-		this.input.onChange(function() {
-			this.sensor.registerValue('keyboard', 0.3);
-		}.bind(this));
-
-		// update suggestions when user types
-		this.input.onChange(function(value) {
-			var suggestedCommands = this.command.getSuggestedCommandsForInput(value);
-			this.input.suggestions.populateFromCommands(suggestedCommands.sort(function(a, b) {
-				return a.name < b.name ? -1 : 1;
-			}));
-		}.bind(this));
-
-		this.input.suggestions.populateFromCommands(this.command.listCommands().sort(function(a, b) {
-			return a.name < b.name ? -1 : 1;
-		}));
-
-		// excite the banshee when user submits
-		this.input.onSubmit(function() {
-			this.sensor.registerValue('operations', 1);
-		}.bind(this));
-
-		// write to log when user submits
-		this.input.onSubmit(function(value) {
-			// Log user input
-			this.output.input(value);
-		}.bind(this));
-
-		// update page title
-		var originalDocumentTitle = document.title,
-			pageTitleElement = document.getElementById('pagetitle');
-		this.input.onSubmit(function(value) {
-			document.title = originalDocumentTitle + ' - '+value.input;
-			pageTitleElement.innerHTML = document.title;
-		}.bind(this));
-
-		// find and execute controller when user submits
-		this.input.onSubmit(function(value) {
-			// Construct req/res, start controllers etc.
-			var req = value,
-				res = this.output;
-			req.app = this;
-
-			try {
-				this.command.executeCommandForRequest(req, res);
-			} catch (error) {
-				res.error(error);
-			}
-		}.bind(this));
-
-		this.input.onSubmit(function(value) {
-			window.history.pushState({input: value.input}, value.input, '#' + value.input.replace(' ', '_'));
-		});
-
-		this.input.onMagicHref(function(value) {
-			this.input.submit(value);
-		}.bind(this));
-
 	}
 
-	Application.prototype.createElement = function() {
-		this.input.focusField(true);
-	};
+	Application.prototype = Object.create(core.Application.prototype);
+	Application.prototype.constructor = Application;
 
-	//window.onload = function() {
-		var app = new Application();
+	var app = new Application();
 
-		app.createElement();
-		app.output.log('Loading 0x.ee system 3...');
-		app.output.log('... done');
 
-		app.output.log([
-			' ___ __ __   _____ _____    _____ __ __ _____ _____ _____ _____    _____   ___   ___     _____ _____ ___   ',
-			'|   |  |  | |   __|   __|  |   __|  |  |   __|_   _|   __|     |  |  |  | |_  | |   |___| __  |     |_  |  ',
-			'| | |-   -|_|   __|   __|  |__   |_   _|__   | | | |   __| | | |  |  |  |_|_  |_| | |___|    -|   --|_| |_ ',
-			'|___|__|__|_|_____|_____|  |_____| |_| |_____| |_| |_____|_|_|_|   \\___/|_|___|_|___|   |__|__|_____|_____|'
-		]);
+	// http://stackoverflow.com/questions/19999388/jquery-check-if-user-is-using-ie
+	function detectIE() {
+		var ua = window.navigator.userAgent;
+		var msie = ua.indexOf('MSIE ');
+		var trident = ua.indexOf('Trident/');
 
-		var hashbang = (window.location.hash || '').trim().replace('_', ' ');
-		if(hashbang) {
-			app.input.submit(hashbang.substr(1));
-		} else {
-			app.input.submit('motd');
+		if (msie > 0) {
+			// IE 10 or older => return version number
+			return parseInt(ua.substring(msie + 5, ua.indexOf('.', msie)), 10);
 		}
 
-		window.app = app;
+		if (trident > 0) {
+			// IE 11 (or newer) => return version number
+			var rv = ua.indexOf('rv:');
+			return parseInt(ua.substring(rv + 3, ua.indexOf('.', rv)), 10);
+		}
+
+		// other browser
+		return false;
+	}
+
+	window.app = app;
 
 
 	//app.portfolio.list()[5].create({ app: app });

@@ -1,101 +1,395 @@
 {
-	"objects": [
-		{
-			"name": "The Hunter",
-			"type": "image",
-			"category": "Illustration",
-			"images": [
-				"illustration/hunter-becomes-the-hunted-kleiner.png",
-				"illustration/hunter-becomes-the-hunted-resized-tuned.jpg"
-			]
-		},
-		{
-			"name": "Owl Business",
-			"type": "image",
-			"category": "Illustration",
-			"images": [
-				"illustration/IMAG0187.gif",
-				"illustration/IMAG0235.jpg"
-			]
-		},
-		{
-			"name": "Misc #1 (the Sleepers)",
-			"type": "image",
-			"category": "Illustration",
-			"images": [
-				"illustration/portfolio0013_verkleind.jpg"
-			]
-		},
-		{
-			"name": "Misc #2 (Rawk)",
-			"type": "image",
-			"category": "Illustration",
-			"images": [
-				"illustration/rawk-handzaam.jpg"
-			]
-		},
-		{
-			"name": "Misc #3",
-			"type": "image",
-			"category": "Illustration",
-			"images": [
-				"illustration/Scan.jpg"
-			]
-		},
-		{
-			"name": "Interfais",
-			"type": "github",
-			"category": "Code",
-			"repository": "git@github.com:wvbe/interfais.git",
-			"readme": "interfais/README.md"
-		},
-		{
-			"name": "ng-dualshock",
-			"type": "github",
-			"category": "Code",
-			"repository": "git@github.com:wvbe/ng-dualshock.git"
-		},
-		{
-			"name": "node-eyetribe",
-			"type": "github",
-			"category": "Code",
-			"repository": "git@github.com:wvbe/node-eyetribe.git"
-		},
-		{
-			"name": "ardronestreamdualshock",
-			"type": "github",
-			"category": "Code",
-			"repository": "git@github.com:wvbe/ardronestreamdualshock.git"
-		},
-		{
-			"name": "object-store",
-			"type": "github",
-			"category": "Code",
-			"repository": "git@github.com:wvbe/object-store.git"
-		},
-		{
-			"name": "bubble",
-			"description": "Bubble is a HTML5 canvas-driven experiment with a group of nodes that interact based on their proximity to others.",
-			"type": "script",
-			"category": "Code",
-			"script": "bubble",
-			"options": {
-				"width": 640,
-				"height": 480,
-				"population": 100,
-				"node_size": 2,
-				"radius_near": 25,
-				"radius_far": 120,
-				"radius_void": 30000,
-				"attraction_multiplier": 0.0003,
-				"attraction_power": 0.3,
-				"repulsion_multiplier": 0.1,
-				"repulsion_power": 0.3,
-				"slowdown_multiplier": 0.98,
-				"gravity": 0.0,
-				"node_color": "rgba(100,100,100, 0)",
-				"line_color": "51,51,51"
-			}
-		}
-	]
+    "objects": [
+        {
+            "dir": "repositories/speak-softly",
+            "category": "code",
+            "repository": "git@github.com:wvbe/speak-softly.git",
+            "type": "github",
+            "readme": true,
+            "assets": [
+                "README.md",
+                "package.json"
+            ],
+            "name": "speak-softly",
+            "description": "",
+            "version": "1.0.0",
+            "author": "",
+            "license": "MIT",
+            "npm": true
+        },
+        {
+            "dir": "repositories/node-eyetribe",
+            "category": "code",
+            "repository": "git@github.com:wvbe/node-eyetribe.git",
+            "assets": [
+                "le-screenshot.png",
+                "Scarlett-Johansson-2.jpg",
+                "package.json"
+            ],
+            "type": "github",
+            "name": "node-eyetribe",
+            "description": "",
+            "version": "0.0.0",
+            "author": "",
+            "license": "MIT",
+            "npm": true
+        },
+        {
+            "dir": "repositories/interfais",
+            "category": "code",
+            "repository": "git@github.com:wvbe/interfais.git",
+            "assets": [
+                "screenshot.gif",
+                "README.md",
+                "package.json"
+            ],
+            "type": "github",
+            "readme": true,
+            "name": "interfais",
+            "description": "Framework to quickly create your own terminal GUI.",
+            "version": "1.0.0",
+            "author": "wvbe <wybe@x-54.com>",
+            "license": "MIT",
+            "npm": true
+        },
+        {
+            "type": "script",
+            "dir": "repositories/bubble",
+            "script": "repositories/bubble",
+            "category": "code",
+            "repository": "git@git.crossfrontal.com:x-54-sandbox/bubble.git",
+            "options": {
+                "width": 640,
+                "height": 480,
+                "population": 100,
+                "node_size": 2,
+                "radius_near": 25,
+                "radius_far": 120,
+                "radius_void": 30000,
+                "attraction_multiplier": 0.0003,
+                "attraction_power": 0.3,
+                "repulsion_multiplier": 0.1,
+                "repulsion_power": 0.3,
+                "slowdown_multiplier": 0.98,
+                "gravity": 0,
+                "node_color": "rgba(100,100,100, 0)",
+                "line_color": "51,51,51"
+            },
+            "name": "bubble",
+            "description": "Bubble bubbles",
+            "version": "0.1.0",
+            "bower": true,
+            "assets": [
+                "bower.json"
+            ]
+        },
+        {
+            "dir": "repositories/object-store",
+            "category": "code",
+            "repository": "git@github.com:wvbe/object-store.git",
+            "type": "github",
+            "readme": true,
+            "assets": [
+                "README.md",
+                "package.json",
+                "bower.json"
+            ],
+            "name": "object-store",
+            "version": "0.0.1",
+            "author": "wvbe (wybe@x-54.com)",
+            "license": "MIT",
+            "npm": true,
+            "bower": true
+        },
+        {
+            "dir": "repositories/otf-server",
+            "category": "code",
+            "repository": "git@github.com:wvbe/otf-server.git",
+            "type": "github",
+            "readme": true,
+            "assets": [
+                "README.md",
+                "package.json"
+            ],
+            "name": "otf-server",
+            "description": "An on-the-fly server for serving Jade+SASS projects",
+            "version": "1.0.0",
+            "author": "wvbe <wybe@x-54.com>",
+            "license": "MIT",
+            "npm": true
+        },
+        {
+            "dir": "repositories/ng-dualshock",
+            "category": "code",
+            "repository": "git@github.com:wvbe/ng-dualshock.git",
+            "assets": [
+                "LICENSE.md",
+                "README.md",
+                "package.json",
+                "bower.json"
+            ],
+            "type": "github",
+            "readme": true,
+            "name": "ng-dualshock",
+            "version": "0.0.1",
+            "author": "wvbe",
+            "license": "MIT",
+            "npm": true,
+            "bower": true
+        },
+        {
+            "dir": "repositories/fuzzy-dangerzone",
+            "category": "code",
+            "repository": "git@github.com:wvbe/fuzzy-dangerzone.git",
+            "type": "github",
+            "readme": true,
+            "assets": [
+                "README.md",
+                "package.json",
+                "bower.json"
+            ],
+            "name": "fuzzy-dangerzone",
+            "description": "Application boilerplate using RequireJS, JADE and SCSS, something of a build system, compatible with build servers, and structured for growth.",
+            "version": "0.0.0",
+            "author": "wvbe <wybe@x-54.com>",
+            "license": "MIT",
+            "npm": true,
+            "bower": true
+        },
+        {
+            "dir": "repositories/ask-nicely",
+            "category": "code",
+            "repository": "git@github.com:wvbe/ask-nicely.git",
+            "type": "github",
+            "readme": true,
+            "assets": [
+                "README.md",
+                "package.json"
+            ],
+            "name": "ask-nicely",
+            "description": "Easily create command-line applications by configuring commands, options and parameters that are supermagically parsed.",
+            "version": "1.0.0",
+            "author": "wvbe",
+            "license": "MIT",
+            "npm": true
+        },
+        {
+            "name": "the hunter",
+            "images": [
+                "hunter-becomes-the-hunted-ingekleurdnshit.jpg",
+                "hunter-becomes-the-hunted-kleiner.png",
+                "hunter-becomes-the-hunted-resized-tuned.jpg",
+                "Scan.jpg"
+            ],
+            "dir": "images/illustration",
+            "category": "illustration",
+            "type": "image"
+        },
+        {
+            "name": "the sleepers",
+            "images": [
+                "portfolio0013_verkleind.jpg"
+            ],
+            "dir": "images/illustration",
+            "category": "illustration",
+            "type": "image"
+        },
+        {
+            "name": "rawk",
+            "images": [
+                "rawk-handzaam.jpg"
+            ],
+            "dir": "images/illustration",
+            "category": "illustration",
+            "type": "image"
+        },
+        {
+            "name": "skullflute",
+            "images": [
+                "skullthing-1.jpg",
+                "skullthing-2.jpg"
+            ],
+            "dir": "images/illustration",
+            "category": "illustration",
+            "type": "image"
+        },
+        {
+            "name": "owl business",
+            "images": [
+                "IMAG0187.gif",
+                "IMAG0235.jpg"
+            ],
+            "dir": "images/illustration",
+            "category": "illustration",
+            "type": "image"
+        },
+        {
+            "name": "kabouter parade",
+            "images": [
+                "017-excerpt.jpg",
+                "2.jpg",
+                "325121_10150355951792017_720912016_8440522_1692874252_o.jpg",
+                "IMAG0080.jpg",
+                "kabouter-resized-tuned.jpg"
+            ],
+            "dir": "images/kabouter-parade",
+            "category": "illustration",
+            "type": "image"
+        },
+        {
+            "name": "takkending",
+            "images": [
+                "01.jpg",
+                "02.jpg",
+                "03.jpg",
+                "04.jpg",
+                "05.jpg"
+            ],
+            "dir": "images/takkending",
+            "category": "cgi",
+            "type": "image"
+        },
+        {
+            "name": "shit",
+            "images": [
+                "002.jpg",
+                "005.jpg",
+                "009.jpg",
+                "014.jpg",
+                "016.jpg",
+                "017-excerpt.jpg",
+                "019.jpg",
+                "022.jpg",
+                "1.jpg",
+                "2.jpg",
+                "2010-04-11-2-55-03.jpg",
+                "2010-04-11-2-57-29.jpg",
+                "2010-04-18-4-34-42.jpg",
+                "2010-04-18-4-44-12.jpg",
+                "2010-04-19-6-09-19.jpg",
+                "2010-05-16-7-34-37.jpg",
+                "3.jpg",
+                "fg2.jpg",
+                "kamer-groot.jpg",
+                "psp.jpg",
+                "thefix.jpg",
+                "Untitled-23.jpg"
+            ],
+            "dir": "images/shit",
+            "category": "illustration",
+            "type": "image"
+        },
+        {
+            "name": "misc. renders",
+            "images": [
+                "398418_10151038658511607_40492602_n.jpg",
+                "balleneter.png",
+                "balls-1.png",
+                "bewegende-takken-shiznit.png",
+                "facebookswarm.jpg",
+                "pagina-bubble.jpg",
+                "polygonthingy-2.png",
+                "polygonthingy-3.png",
+                "polygonthingy-4.png",
+                "Screen Shot 2013-04-03 at 3.47.58 PM.png",
+                "Screen Shot 2013-04-03 at 3.48.21 PM.png"
+            ],
+            "dir": "images/other-code-experiments",
+            "category": "cgi",
+            "type": "image"
+        },
+        {
+            "name": "3ds max",
+            "images": [
+                "3-1-optimized.jpg",
+                "3-1.png",
+                "3-2-optimized.jpg",
+                "Clipboard01.jpg"
+            ],
+            "dir": "images/3dsmax",
+            "category": "cgi",
+            "type": "image"
+        },
+        {
+            "name": "space-invadurz",
+            "images": [
+                "screenshot.png"
+            ],
+            "dir": "images/spaceinvadurz",
+            "category": "flash",
+            "type": "image"
+        },
+        {
+            "youtube": "O_11OoBG3pA",
+            "category": "school",
+            "uploader": "Wybe Minnebo",
+            "uploaded": "2012-04-19T16:11:32.000Z",
+            "name": "KB-07 2011-2012p3 Groep 2",
+            "description": "\"Er is op een kruispunt in het centrum van de stad een aanrijding gebeurd. Naar aanleiding van dit ongeluk zijn de er getuigenverklaringen afgenomen bij de betrokkenen en de getuigen van dit ongeluk. Doordat, ondanks de verschillende getuigenverklaringen, het nog steeds onduidelijk is wie de schuldige is van dit ongeluk moet het ongeluk nagereconstrueerd worden.\n\nHet doel van het project is om in 3DS Max het ongeluk na te reconstrueren, zodat er met behulp van deze animatie een eventuele schuldige aangewezen kan worden in de rechtszaal. Deze animatie zal het ongeluk vanuit de ogen van alle betrokkenen weergeven en hoe zij dit beleefd hebben. Ook zal hun kant van het verhaal hierin verteld worden. Het ongeluk wordt ook van bovenaf weergegeven. Zo worden alle feiten en verschillende waarheden weergeven, wat het gemakkelijker maakt voor de rechter om een beeld te vormen van wat er werkelijk gebeurd is voorafgaande en tijdens het ongeluk. Een animatie als deze wordt een forensische animatie genoemd.\"\n\nMede mogelijk gemaakt door Bart Waardenburg, Hester van Eeden, Jairo Arends, Timo van der Keijl, Ibtisam Ahmed en natuurlijk mijzelf :)",
+            "type": "youtube"
+        },
+        {
+            "youtube": "5RyHqpv4efE",
+            "category": "home-video",
+            "uploader": "Wybe Minnebo",
+            "uploaded": "2011-05-05T18:32:51.000Z",
+            "name": "Sauerkraut",
+            "description": "A re-upload of an ancient video back at the Hogeschool for the Kunsten Utrecht. The song is \"Feadz On\" by the magnificent Mr. Oizo, and my classmates are Stein, Julian and Alex. This dance is copyrighted.",
+            "type": "youtube"
+        },
+        {
+            "youtube": "OCDKpDPe6RE",
+            "category": "home-video",
+            "uploader": "Wybe Minnebo",
+            "uploaded": "2010-02-17T11:51:40.000Z",
+            "name": "PAARAA",
+            "description": "",
+            "type": "youtube"
+        },
+        {
+            "youtube": "D7LrgWjs4ok",
+            "category": "home-video",
+            "uploader": "Wybe Minnebo",
+            "uploaded": "2010-01-03T18:46:13.000Z",
+            "name": "Roger & Danski",
+            "description": "... going trough a difficult phase in their lives.",
+            "type": "youtube"
+        },
+        {
+            "youtube": "9PiXhCwdyvM",
+            "category": "home-video",
+            "uploader": "Wybe Minnebo",
+            "uploaded": "2009-12-25T14:50:14.000Z",
+            "name": "Blanes '09",
+            "description": "Compiled video of seven guys from Holland in a crappy car visiting Blanes, Spain, for summer holiday in 2009. Good times. Special thanks go out to camping Bella Terra for not kicking our asses out, Pontiac for making a crappy yet trusty Transporter and Lidl for cheap beer and booze.",
+            "type": "youtube"
+        },
+        {
+            "youtube": "JutNbKY5Xu0",
+            "category": "home-video",
+            "uploader": "Wybe Minnebo",
+            "uploaded": "2009-10-21T14:03:54.000Z",
+            "name": "Néééé!!!111``",
+            "description": "Geoffrey ontdekt dat Lady Gaga een hermafrodiet is",
+            "type": "youtube"
+        },
+        {
+            "youtube": "pRs88QOrM3w",
+            "category": "home-video",
+            "uploader": "Wybe Minnebo",
+            "uploaded": "2009-08-29T15:27:38.000Z",
+            "name": "MacDonalds Incident",
+            "description": "Boertje geeft een toelichting onder begeleiding van Hennie",
+            "type": "youtube"
+        },
+        {
+            "youtube": "QOtM5iGnu04",
+            "category": "home-video",
+            "uploader": "Wybe Minnebo",
+            "uploaded": "2009-05-17T12:15:49.000Z",
+            "name": "Nach Voor De Dag '09 Hi-Res",
+            "description": "High resolution versie van de lo-res versie :) Nog steeds niet af",
+            "type": "youtube"
+        }
+    ]
 }
